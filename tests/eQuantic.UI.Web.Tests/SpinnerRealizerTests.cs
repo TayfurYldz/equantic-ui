@@ -19,6 +19,26 @@ public class SpinnerRealizerTests
 
     private static HtmlNode Render(VisualNode node) => WebRealizer.Lower(node, Theme).Render();
 
+    /// <summary>
+    /// SSR and the client must describe one bar ONE way. The eight class names below are
+    /// cross-pinned with <c>spinner.spec.ts</c>, which asserts the same eight for the same spinner
+    /// built by the twin: the client used to hand-build an inline style here, so the same element
+    /// carried a shared class when the server drew it and an inline declaration when the browser
+    /// did. The suites either side of this one assert the DECLARATION and so could not tell.
+    /// </summary>
+    [Fact]
+    public void TheAtomizedBars_CarryTheSameClassesTheTwinProduces()
+    {
+        var rendered = WebRealizer.Lower(new Spinner(), Theme, 1f, new StyleSink()).Render();
+        var bars = rendered.Children.Where(child => child.Tag == "rect").ToList();
+
+        bars.Select(bar => bar.Attributes.GetValueOrDefault("class")).Should().Equal(
+            "eq-153eepm", "eq-1x7lrpl", "eq-1uka0o0", "eq-1rys0p3",
+            "eq-1lc4svq", "eq-1e3tu7p", "eq-bzqht8", "eq-fh9n7");
+        bars.Should().OnlyContain(bar => !bar.Attributes.ContainsKey("style"),
+            "every declaration became a shared class");
+    }
+
     [Fact]
     public void Spinner_LowersToTheEightBarSvg()
     {
@@ -53,12 +73,42 @@ public class SpinnerRealizerTests
         var css = PhotonCssGenerator.Generate(Theme);
 
         css.Should().Contain("@keyframes eq-spinner-fade { from { opacity: 1; } to { opacity: 0.3; } }");
-        css.Should().Contain(".eq-spinner rect { animation: eq-spinner-fade 800ms linear infinite; }");
+        css.Should().Contain(".eq-spinner rect { animation-name: eq-spinner-fade; animation-duration: 800ms; animation-timing-function: linear; animation-iteration-count: infinite; }");
         css.Should().Contain(".eq-spinner { opacity: 0; animation: eq-appear 1ms linear 400ms forwards; }",
             "the 400ms anti-flash appear delay (spec B15)");
         css.Should().Contain(
             "@media (prefers-reduced-motion: reduce) { .eq-spinner rect { animation-delay: 0ms !important; } }",
             "Reduce Motion drops the rotation phase — the bars pulse in place");
+    }
+
+    /// <summary>
+    /// The delay a bar carries only means something if it WINS. It rides an atomic class, whose
+    /// selector is one class (0,1,0) and therefore loses to every rule here that names the bar
+    /// (0,1,1) — and the fade was written as the <c>animation</c> SHORTHAND, which sets each
+    /// longhand it leaves out. So the stylesheet quietly wrote <c>animation-delay: 0s</c> over all
+    /// eight, and the ring pulsed in place instead of turning: measured in the browser, where the
+    /// bars computed to <c>0s</c> while the class beside them said <c>-100ms</c>.
+    ///
+    /// Neither suite could see it. Both assert what the realizer PRODUCES, and the realizer was
+    /// right; the stylesheet took the value away afterwards. So the invariant is stated over the
+    /// stylesheet itself: nothing may set a bar's delay except Reduce Motion, which is entitled to
+    /// (it is <c>!important</c>, and zeroing the phase is what it means).
+    /// </summary>
+    [Fact]
+    public void NoRule_OutranksTheDelayABarCarries()
+    {
+        var css = PhotonCssGenerator.Generate(Theme);
+
+        var rulesTouchingABarsDelay = css.Split('\n')
+            .Select(line => line.Trim())
+            .Where(line => line.Contains(".eq-spinner rect"))
+            // A shorthand counts: `animation: …` writes the delay whether or not it mentions one.
+            .Where(line => line.Contains("animation-delay") || line.Contains("animation:"))
+            .ToList();
+
+        rulesTouchingABarsDelay.Should().ContainSingle(
+            "a bar's own delay must be the only one, or the stagger is silently dropped")
+            .Which.Should().StartWith("@media (prefers-reduced-motion: reduce)");
     }
 
     [Fact]
