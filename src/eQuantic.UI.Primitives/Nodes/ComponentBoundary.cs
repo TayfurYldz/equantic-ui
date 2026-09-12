@@ -18,11 +18,20 @@ namespace eQuantic.UI.Primitives;
 /// remembered — a component that stops throwing (a retry, new props, a hot reload) simply builds
 /// again on the next pass.
 /// </para>
+///
+/// <para>
+/// BEHAVIOUR remembers nothing; the DIAGNOSTIC remembers for the run. Those are different
+/// statements and the distinction is the point: a recovered component is built and drawn exactly
+/// like one that never threw, while <see cref="Contained"/> still names it until the run ends.
+/// Anything else would let a failure disappear because the next frame happened to be clean, which
+/// is the silence the tally exists to remove.
+/// </para>
 /// </summary>
 public static class ComponentBoundary
 {
     private static readonly AsyncLocal<bool> _diagnostics = new();
     private static readonly AsyncLocal<Action<UiComponent, Exception>?> _report = new();
+    private static readonly AsyncLocal<List<string>?> _contained = new();
 
     /// <summary>
     /// Whether a DEVELOPER is watching. Armed by the host per render scope — the SSR pipeline from
@@ -53,6 +62,37 @@ public static class ComponentBoundary
     }
 
     /// <summary>
+    /// Which components this scope has contained, by type name, first seen first. EMPTY is the
+    /// answer a healthy render gives, and that is the whole point of it.
+    ///
+    /// <para>
+    /// <see cref="Report"/> sends a failure to a log, which a human reads. Nothing an automated
+    /// check looks at moved: a headless run of an app whose entire title bar threw on every frame
+    /// still presented its frames, still exited zero, and reported MORE accessibility elements than
+    /// a healthy one — the containment surface has text of its own. Reported by a consumer who had
+    /// written "frames presented and exit 0" down as the check that catches a black window, and
+    /// found it could not.
+    /// </para>
+    ///
+    /// <para>
+    /// Names rather than a count, because the count a run produces is frames × failures and the
+    /// actionable fact is WHICH component. A host prints this beside its frame summary, and a
+    /// strict one refuses to exit zero while it is non-empty.
+    /// </para>
+    /// </summary>
+    public static IReadOnlyCollection<string> Contained =>
+        _contained.Value is { } seen ? seen.ToArray() : [];
+
+    /// <summary>
+    /// Forgets what was contained. A host arms a RUN with this, as it does the report sink — the
+    /// scope is the run and deliberately not the frame: a component that threw and then recovered
+    /// still threw, and a summary that drops it because the next frame was clean is the silence
+    /// this tally exists to remove. What it prevents is a later run being read as carrying an
+    /// earlier one's failures, which a long-lived host reaches immediately.
+    /// </summary>
+    public static void ClearContained() => _contained.Value = null;
+
+    /// <summary>
     /// Expands a component the way every realizer must: its subtree if <see cref="UiComponent.Build"/>
     /// returns, the contained failure surface if it throws.
     /// </summary>
@@ -64,6 +104,12 @@ public static class ComponentBoundary
         }
         catch (Exception error)
         {
+            // DISTINCT, and the reason is the failure mode itself: a component that throws throws on
+            // every frame, so a count would report the frame rate and bury the one fact worth
+            // having, which is its name.
+            var seen = _contained.Value ??= [];
+            var name = component.GetType().Name;
+            if (!seen.Contains(name)) seen.Add(name);
             Report?.Invoke(component, error);
             return Describe(component, error, context);
         }

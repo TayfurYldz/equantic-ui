@@ -318,7 +318,14 @@ public class PhotonActivity : Activity, ISurfaceHolderCallback, Choreographer.IF
         if (forced == true && FramesPresented >= Application!.Options.MaxFrames)
         {
             ProbeAccessibility();
-            Console.WriteLine($"[photon] frames presented: {FramesPresented}");
+            var contained = eQuantic.UI.Primitives.ComponentBoundary.Contained;
+            Console.WriteLine(contained.Count == 0
+                ? $"[photon] frames presented: {FramesPresented}"
+                : $"[photon] frames presented: {FramesPresented} — CONTAINED: {string.Join(", ", contained)}");
+            // No exit code here on purpose: an Activity is not a process with a status, and
+            // Finish() finishes a screen. StrictRender is scoped to the desktop shells, which have
+            // one — setting it here would have looked like a gate and been a no-op.
+
             Choreographer.Instance.RemoveFrameCallback(this);
             Finish();
         }

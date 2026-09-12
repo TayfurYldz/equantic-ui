@@ -73,8 +73,28 @@ public sealed class WindowsPhotonRunner : IPhotonRunner
         var themeController = app.Services.GetService(typeof(IThemeController)) as PhotonThemeController;
         window.Run(app.Root(), options.Theme, mode, options.MaxFrames, themeController, cultureController,
             followSystemTheme: options.Mode is null);
-        Console.WriteLine($"[photon] frames presented: {window.FramesPresented} through {window.PresenterName}, "
-            + $"{window.AveragePresentMs:F0} ms per frame");
+        ReportFrames($"frames presented: {window.FramesPresented} through {window.PresenterName}, "
+            + $"{window.AveragePresentMs:F0} ms per frame", app);
+    }
+
+    /// <summary>
+    /// The frame summary, plus what the render CONTAINED. A boundary is meant to turn a crash into
+    /// a small red box, and every automated signal — frames presented, exit code, the accessibility
+    /// count — sides with the box. So the names go on the line everyone reads, and StrictRender
+    /// decides whether the exit code says so too.
+    /// </summary>
+    private static void ReportFrames(string summary, PhotonApplication app)
+    {
+        var contained = eQuantic.UI.Primitives.ComponentBoundary.Contained;
+        Console.WriteLine(contained.Count == 0
+            ? $"[photon] {summary}"
+            : $"[photon] {summary} — CONTAINED: {string.Join(", ", contained)}");
+        // ASSIGNED, not merely set to 1: the exit code is process-global while the tally is per run,
+        // so a host that runs a failing strict app and then a healthy one would have carried the
+        // first verdict out of the process. Strict means THIS run's gate, so this run says both
+        // answers — and when strict is off the code is never touched, which is what lets an app set
+        // its own.
+        if (app.Options.StrictRender) Environment.ExitCode = contained.Count > 0 ? 1 : 0;
     }
 
     /// <summary>
@@ -122,7 +142,9 @@ public sealed class WindowsPhotonRunner : IPhotonRunner
         var pixels = new byte[width * height * 4];
         surface.ReadPixelsSrgb(pixels);
         File.WriteAllBytes(path, PngCodec.Encode(width, height, pixels));
-        Console.WriteLine($"[photon] screenshot: {path}");
+        // The headless path needs this MORE than the windowed one, not less: a CI screenshot step
+        // is exactly where nobody is looking at the picture.
+        ReportFrames($"screenshot: {path}", app);
     }
 
     private static void AttachParentConsole()
