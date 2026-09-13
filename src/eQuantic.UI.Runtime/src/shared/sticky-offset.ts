@@ -64,16 +64,33 @@ export function scheduleAnchorOffset(): void {
  */
 export function publishAnchorOffset(): void {
   if (typeof document === 'undefined') return;
-  const root = document.documentElement;
   const measured = overlappingChrome();
-  const next = `${measured}px`;
-  if (root.style.getPropertyValue(VARIABLE) === next) return;
-  root.style.setProperty(VARIABLE, next);
-  realignColdLoad(measured);
+  if (publishMeasured(measured)) realignColdLoad(measured);
 }
 
-/** Whether the first measurement has had its chance to correct a cold load's fragment jump. */
+/**
+ * Writes the variable, and answers whether it CHANGED. Separate from measuring because the deferred
+ * re-check needs the number without the early return: the common case at `load` is chrome that has
+ * not moved, and a correction that is skipped because the variable already says 65px is the same
+ * class of miss this whole function exists to undo.
+ */
+function publishMeasured(measured: number): boolean {
+  const root = document.documentElement;
+  const next = `${measured}px`;
+  if (root.style.getPropertyValue(VARIABLE) === next) return false;
+  root.style.setProperty(VARIABLE, next);
+  return true;
+}
+
+/** Whether a cold load's fragment jump has been corrected, or has run out of chances. */
 let coldLoadHandled = false;
+/** Whether the one deferred re-check is already booked, so a burst of passes books it once. */
+let recheckBooked = false;
+/**
+ * Which document the pending work belongs to. Bumped by the test seam, and read by every deferred
+ * callback, so work booked before a reset can never land after one.
+ */
+let generation = 0;
 
 /**
  * A COLD load with a fragment lands the target UNDER the chrome, and this is the one place that can
@@ -87,20 +104,89 @@ let coldLoadHandled = false;
  *
  * Corrected ONCE, and only when the target really is behind the chrome — its top inside `[0, offset)`
  * is exactly the broken state and nothing else. A reader who has already scrolled somewhere else
- * leaves the band, and a later pass that republishes the same number never reaches here at all.
+ * leaves the band.
+ *
+ * <para>
+ * The chance is spent on the CORRECTION, never on the measurement, and that distinction is the
+ * whole defect this shape replaces. The browser re-runs its fragment jump as late content settles
+ * the layout, so a measurement can easily land while the target is still far down the page — out of
+ * the band, nothing to do. Retiring there spent the only chance on a moment when there was nothing
+ * to correct, and the jump that followed had no one left to undo it. Reported from a live site:
+ * `/privacy#rights` cold, `scrollY 3992`, `targetTop 0` on every sample over four seconds, with the
+ * variable and `scroll-margin-top` both reading 65px — and the same site's WARM navigation to the
+ * same fragment landing correctly, which is what said the mechanism was right and the ORDER was not.
+ * </para>
+ *
+ * <para>
+ * A second chance is booked rather than assumed, because there may be no second measurement at all:
+ * this publishes after a render PASS, and a settled page has none. So the re-check rides the
+ * document's own `load`, which is the event that says the layout the browser jumped against is
+ * final.
+ * </para>
  */
 function realignColdLoad(offset: number): void {
-  if (coldLoadHandled || offset <= 0) return;
-  coldLoadHandled = true;
-  if (typeof location === 'undefined') return;
-  const target = bookmarkTarget(location.hash, document);
-  if (!target) return;
+  if (coldLoadHandled) return;
+  // Only a URL that ASKS for an element has anything to correct, and this is what keeps every other
+  // page from booking a `load` listener it will never use.
+  if (typeof location === 'undefined' || location.hash.length <= 1) return;
+
+  // A zero offset is a reason to come BACK, not a reason to stop. Chrome that is not there yet
+  // measures zero — an image-backed header before its image, a bar whose webfont has not arrived —
+  // and it can grow without any further render pass to notice. Retiring here would leave exactly
+  // the page this correction exists for. Found in review; the first version returned on `offset
+  // <= 0` before it had even looked for a target.
+  const target = offset > 0 ? bookmarkTarget(location.hash, document) : null;
+  if (!target) {
+    bookRecheck();
+    return;
+  }
   const top = target.getBoundingClientRect().top;
-  if (top < 0 || top >= offset) return;
+  if (top < 0 || top >= offset) {
+    bookRecheck();
+    return;
+  }
+  coldLoadHandled = true;
   target.scrollIntoView();
+}
+
+/**
+ * One deferred chance, after the browser's own jump has settled. `load` is the signal because it is
+ * the one that means the layout is final; a document already complete gets the next frame instead,
+ * which is still after any jump the browser has queued.
+ */
+function bookRecheck(): void {
+  if (recheckBooked || typeof window === 'undefined') return;
+  recheckBooked = true;
+  // The DOCUMENT this work belongs to. A deferred callback outlives the reset that a spec performs
+  // between cases, so without this a frame booked by one document runs against the next one's DOM
+  // and either suppresses its correction or performs one nobody asked for — a suite that lies about
+  // itself, which is worse than a suite that fails. Found in review.
+  const booked = generation;
+  const recheck = (): void => {
+    if (booked !== generation) return;
+    if (coldLoadHandled) return;
+    // MEASURED AGAIN, never the number that booked this. The whole point of deferring is that the
+    // layout was not final, and the chrome is part of that layout: a bar that wraps at a narrow
+    // width, or grows when a webfont finally arrives, is taller at `load` than at first paint.
+    // Correcting against the stale number would leave the target under the header it actually has.
+    const measured = overlappingChrome();
+    publishMeasured(measured);
+    // Retire here whatever the answer: this WAS the second chance, and a page that is still wrong
+    // after its own load event is not something a later scroll should be yanked for.
+    realignColdLoad(measured);
+    coldLoadHandled = true;
+  };
+  if (document.readyState === 'complete') {
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(recheck);
+    else recheck();
+    return;
+  }
+  window.addEventListener('load', () => recheck(), { once: true });
 }
 
 /** Test seam: the correction is once per document, and a spec renders many. */
 export function resetColdLoadRealignmentForTests(): void {
   coldLoadHandled = false;
+  recheckBooked = false;
+  generation += 1;
 }

@@ -187,26 +187,43 @@ describe('the room a bookmark keeps is an atomic class', () => {
  * live `/privacy#rights`: it scrolled, and it scrolled to the wrong place.
  */
 describe('the first measurement corrects a cold load that landed under the chrome', () => {
-  function chrome(height: number): HTMLElement {
+  function chrome(height: number): {
+    remove: () => void;
+    growTo: (next: number) => void;
+  } {
     const bar = document.createElement('div');
     bar.setAttribute(PINNED_MARKER, '');
+    let tall = height;
     bar.getBoundingClientRect = () =>
-      ({ top: 0, bottom: height, height, left: 0, right: 0, width: 0, x: 0, y: 0 }) as DOMRect;
+      ({ top: 0, bottom: tall, height: tall, left: 0, right: 0, width: 0, x: 0, y: 0 }) as DOMRect;
     document.body.appendChild(bar);
-    return bar;
+    return { remove: () => bar.remove(), growTo: (next) => (tall = next) };
   }
 
-  function bookmark(id: string, top: number): { element: HTMLElement; seen: () => number } {
+  function bookmark(
+    id: string,
+    top: number,
+  ): { element: HTMLElement; seen: () => number; moveTo: (next: number) => void } {
     const element = document.createElement('div');
     element.id = id;
     let calls = 0;
+    let at = top;
     element.scrollIntoView = () => {
       calls += 1;
     };
     element.getBoundingClientRect = () =>
-      ({ top, bottom: top, height: 0, left: 0, right: 0, width: 0, x: 0, y: top }) as DOMRect;
+      ({ top: at, bottom: at, height: 0, left: 0, right: 0, width: 0, x: 0, y: at }) as DOMRect;
     document.body.appendChild(element);
-    return { element, seen: () => calls };
+    return { element, seen: () => calls, moveTo: (next) => (at = next) };
+  }
+
+  /**
+   * jsdom reports `complete` from the first line of the file, so a spec that does not say otherwise
+   * exercises the already-loaded branch and NEVER the `load` listener — which is the branch a real
+   * cold load takes, and the only one that matters. Stated rather than inherited.
+   */
+  function stillLoading(): void {
+    Object.defineProperty(document, 'readyState', { value: 'loading', configurable: true });
   }
 
   beforeEach(() => {
@@ -216,6 +233,7 @@ describe('the first measurement corrects a cold load that landed under the chrom
   });
 
   afterEach(() => {
+    Object.defineProperty(document, 'readyState', { value: 'complete', configurable: true });
     document.body.innerHTML = '';
     window.history.replaceState(null, '', '/probe');
   });
@@ -240,6 +258,209 @@ describe('the first measurement corrects a cold load that landed under the chrom
     publishAnchorOffset();
 
     expect(target.seen()).toBe(0);
+    bar.remove();
+  });
+
+  /**
+   * THE ORDER THE OTHER THREE DO NOT TEST: the measurement lands BEFORE the browser has finished
+   * its fragment jump.
+   *
+   * <para>
+   * Every case above calls `publishAnchorOffset` with the target already where the jump left it, so
+   * "out of the band" only ever meant "a reader who scrolled away". It also means a target still
+   * far down the page — which is where it sits until the browser jumps, and the browser re-runs
+   * that jump as late content settles the layout. The one-shot flag is spent by that early
+   * measurement, so when the jump finally lands the target at 0 there is no chance left.
+   * </para>
+   *
+   * <para>
+   * Reported from a live site: `/privacy#rights` cold, `scrollY 3992`, `targetTop 0` on all eight
+   * samples over four seconds, with `--eq-anchor-offset` and `scroll-margin-top` both reading 65px.
+   * The same site's WARM navigation to the same fragment lands at 64, which is what says the
+   * mechanism is right and only this ordering is wrong.
+   * </para>
+   */
+  it('still corrects when the first measurement beat the browser to the jump', () => {
+    const bar = chrome(64);
+    // Where the target sits while the document is still settling: far below the fold.
+    const target = bookmark('rights', 3992);
+    window.history.replaceState(null, '', '/probe#rights');
+
+    publishAnchorOffset();
+    expect(target.seen()).toBe(0);
+
+    // The browser now performs the jump it had not finished, with `scroll-margin-top` resolving
+    // through a variable that is only NOW set — so it lands at the top, behind the chrome.
+    target.moveTo(0);
+    document.documentElement.style.removeProperty('--eq-anchor-offset');
+    publishAnchorOffset();
+
+    expect(target.seen()).toBe(1);
+    bar.remove();
+  });
+
+  /**
+   * The SAME ordering, with the thing the real page does not have: a second render pass.
+   *
+   * <para>
+   * `publishAnchorOffset` runs after a pass, and a settled page has none — so on a live site the
+   * correction's second chance cannot come from another measurement. It has to ride the document's
+   * own `load`, which is the event that says the layout the browser jumped against is final. Without
+   * that, moving the one-shot flag onto the correction fixes nothing here: the page simply stays
+   * behind the header with the flag still armed and nobody left to read it.
+   * </para>
+   */
+  it('takes its second chance from `load` when no further pass ever comes', () => {
+    stillLoading();
+    const bar = chrome(64);
+    const target = bookmark('rights', 3992);
+    window.history.replaceState(null, '', '/probe#rights');
+
+    publishAnchorOffset();
+    expect(target.seen()).toBe(0);
+
+    // The browser finishes its jump as the last of the layout settles, and then the document loads.
+    target.moveTo(0);
+    window.dispatchEvent(new Event('load'));
+
+    expect(target.seen()).toBe(1);
+    bar.remove();
+  });
+
+  /**
+   * And the chance is spent for good once `load` has passed, so a reader who scrolls the target
+   * into the band later is never yanked. This is what the A/B against the plausible wrong fix
+   * — "spend the flag on the correction instead of the measurement" — lands on: on its own that
+   * leaves the page armed forever.
+   */
+  it('is retired by `load` even when it had nothing to correct', () => {
+    stillLoading();
+    const bar = chrome(64);
+    const target = bookmark('rights', 3992);
+    window.history.replaceState(null, '', '/probe#rights');
+
+    publishAnchorOffset();
+    window.dispatchEvent(new Event('load')); // still out of the band: nothing to do, chance spent
+
+    // The reader now scrolls the target into the band by hand. Nothing may move.
+    target.moveTo(10);
+    document.documentElement.style.removeProperty('--eq-anchor-offset');
+    publishAnchorOffset();
+
+    expect(target.seen()).toBe(0);
+    bar.remove();
+  });
+
+  /**
+   * The deferred chance measures the chrome AGAIN, never the number that booked it.
+   *
+   * <para>
+   * Found in review, and it is the same mistake one level down: the whole point of deferring is
+   * that the layout was not final, and the chrome is part of that layout — a bar wraps at a narrow
+   * width, or grows when a webfont finally arrives. Correcting against the height measured at first
+   * paint leaves the target under the header the page actually ended up with, which is the bug this
+   * file exists to prevent, reintroduced by its own fix.
+   * </para>
+   */
+  it('corrects against the chrome the page ENDED with, not the one that booked the re-check', () => {
+    stillLoading();
+    const bar = chrome(64);
+    const target = bookmark('rights', 3992);
+    window.history.replaceState(null, '', '/probe#rights');
+
+    publishAnchorOffset();
+    expect(target.seen()).toBe(0);
+
+    // The webfont lands: the bar grows, and the browser's jump leaves the target at 70 — clear of
+    // the 64 that booked this, still buried under the 80 the header now is.
+    bar.growTo(80);
+    target.moveTo(70);
+    window.dispatchEvent(new Event('load'));
+
+    expect(target.seen()).toBe(1);
+    expect(document.documentElement.style.getPropertyValue('--eq-anchor-offset')).toBe('80px');
+    bar.remove();
+  });
+
+  /**
+   * Chrome that is not THERE yet measures zero, and zero is a reason to come back rather than a
+   * reason to stop.
+   *
+   * <para>
+   * An image-backed header before its image, or a bar whose webfont has not arrived, is zero-high at
+   * first paint and grows with no further render pass to notice. The first version of this fix
+   * returned on `offset <= 0` before it had even looked for a target, so the page this correction
+   * exists for was the one page it retired on. Found in review.
+   * </para>
+   */
+  it('comes back for chrome that was not there yet', () => {
+    stillLoading();
+    const bar = chrome(0);
+    const target = bookmark('rights', 0);
+    window.history.replaceState(null, '', '/probe#rights');
+
+    publishAnchorOffset();
+    expect(target.seen()).toBe(0);
+
+    bar.growTo(64); // the header's image finally decodes
+    window.dispatchEvent(new Event('load'));
+
+    expect(target.seen()).toBe(1);
+    bar.remove();
+  });
+
+  /** A page that never asks for an element books nothing — no listener, no frame, no work. */
+  it('books nothing for a URL with no fragment', () => {
+    stillLoading();
+    const bar = chrome(64);
+    const target = bookmark('rights', 0);
+    window.history.replaceState(null, '', '/probe');
+
+    publishAnchorOffset();
+    window.dispatchEvent(new Event('load'));
+
+    expect(target.seen()).toBe(0);
+    bar.remove();
+  });
+
+  /**
+   * Work booked by one document may never land on the next one.
+   *
+   * <para>
+   * A deferred callback outlives the reset a spec performs between cases, so without a generation
+   * the frame booked here would run against the following case's DOM and either suppress its
+   * correction or perform one nobody asked for. That is a suite that lies about itself, which is
+   * worse than one that fails — and this file's whole value is that it can be believed. Found in
+   * review, against these very tests.
+   * </para>
+   */
+  it('lets no deferred work cross into the next document', () => {
+    stillLoading();
+    const stale = chrome(64);
+    const staleTarget = bookmark('rights', 3992);
+    window.history.replaceState(null, '', '/probe#rights');
+    publishAnchorOffset(); // books a re-check that belongs to THIS document
+    stale.remove();
+    document.body.innerHTML = '';
+
+    // A new document begins, exactly as `beforeEach` does it.
+    resetColdLoadRealignmentForTests();
+    document.documentElement.style.removeProperty('--eq-anchor-offset');
+
+    // …and the PREVIOUS document's deferred work lands now, before this one has measured anything.
+    // Ungenerationed it retires the flag here, and the correction below then finds its one chance
+    // already spent — the suppression this guard exists for, and the reason the first version of
+    // this case proved nothing: with both documents sharing a hash, the stale callback happened to
+    // do the right thing by accident and the test passed either way.
+    window.dispatchEvent(new Event('load'));
+
+    const bar = chrome(64);
+    const target = bookmark('rights', 0); // squarely in the band: this one MUST be corrected
+    window.history.replaceState(null, '', '/probe#rights');
+    publishAnchorOffset();
+
+    expect(staleTarget.seen()).toBe(0);
+    expect(target.seen()).toBe(1);
     bar.remove();
   });
 
