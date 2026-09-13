@@ -7,7 +7,7 @@
 import type { LoweringContext } from './lowering';
 import { resolveService } from '../utils/services';
 import { getCurrentRoute, type RouteData } from '../router/current-route';
-import { cssFontWeight, type AppTheme } from './value-types';
+import { cssFontWeight, isWellFormedFace, type AppTheme } from './value-types';
 import type { TypeStyleValue } from './nodes';
 import type { DensityValue } from './enums.generated';
 import { photonTheme } from './design-system.generated';
@@ -77,7 +77,12 @@ export function measurePhotonText(text: string, style: TypeStyleValue, typeScale
   if (!text) return 0;
   const context = measuringContext();
   if (!context) return 0;
-  const family = style.mono ? monoStack() : SANS_STACK;
+  // The NAMED face first, then the stack that would have been used — the same order the lowering
+  // writes into `font-family`. Measuring with a different face than the one that draws is what the
+  // comment beside MONO_STACK calls a caret beside the character it is on, and a brand face is
+  // exactly the case where the two advance differently.
+  const base = style.mono ? monoStack() : sansStack();
+  const family = isWellFormedFace(style.family) ? `"${style.family}", ${base}` : base;
   // NUMERIC weight: the enum arrives as a member name, and a name makes the whole shorthand
   // invalid — see cssFontWeight for what that cost.
   context.font = `${cssFontWeight(style.weight)} ${style.size * typeScale}px ${family}`;
@@ -90,34 +95,50 @@ export function photonMonoAdvance(style: TypeStyleValue, typeScale = 1): number 
   return width > 0 ? width / sample.length : 0;
 }
 
-/** The font stacks the CSS uses — measuring with anything else measures the wrong text. */
-const SANS_STACK =
-  'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
-const MONO_STACK =
-  'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace';
+/**
+ * The font stacks the CSS uses — measuring with anything else measures the wrong text.
+ *
+ * These are the FALLBACKS the lowering declares inside its `var(...)`, character for character. The
+ * variable itself is resolved below, because the base stylesheet DEFINES `--eq-font-family`, so the
+ * fallback is what a page reaches only when the sheet is absent — and a constant that ignores the
+ * variable measures a stack the page never draws with. That is what this used to do: it carried a
+ * list of its own, two entries longer than any of the three the CSS side actually declares.
+ */
+const SANS_FALLBACK = 'system-ui, -apple-system, sans-serif';
+// Character for character the fallback inside the CSS `var(...)`, quotes included. `--eq-font-mono`
+// is a hook an APP sets and the base stylesheet declares nothing, so this literal is what the page
+// normally paints with — a list of this measurer's own would be the common case, not the edge one.
+const MONO_FALLBACK = "ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace";
 
 /**
- * The mono face as the page will actually DRAW it: the lowering emits
- * `var(--eq-font-mono, …)`, so an app that set that variable is drawing in a face this measurer
- * would otherwise know nothing about — and a code editor places its caret from a measured column
- * advance. Different face, different advance, caret beside the character rather than on it.
+ * The faces as the page will actually DRAW them. The lowering emits `var(--eq-font-family, …)` and
+ * `var(--eq-font-mono, …)`, and the base stylesheet DECLARES the first, so a measurer that reads
+ * only the fallback measures a stack the page never paints. A code editor places its caret from a
+ * measured column advance: different face, different advance, caret beside the character.
  *
  * Resolved once and cached, like the canvas: the variable's VALUE is static CSS. (A web font that
  * loads late changes metrics without changing this string, which is the pre-existing hazard for
  * every stack here, not one this introduces.)
+ *
+ * ONE reader with two callers rather than one per axis — the sans half was missing for as long as
+ * the mono half existed, which is what two pieces answering the same question costs.
  */
+let sansResolved: string | undefined;
 let monoResolved: string | undefined;
 
+function sansStack(): string {
+  return (sansResolved ??= declaredStack('--eq-font-family', SANS_FALLBACK));
+}
+
 function monoStack(): string {
-  if (monoResolved !== undefined) return monoResolved;
-  monoResolved = MONO_STACK;
-  if (typeof document !== 'undefined' && document.documentElement) {
-    const declared = getComputedStyle(document.documentElement)
-      .getPropertyValue('--eq-font-mono')
-      .trim();
-    if (declared) monoResolved = declared;
-  }
-  return monoResolved;
+  return (monoResolved ??= declaredStack('--eq-font-mono', MONO_FALLBACK));
+}
+
+/** The custom property's VALUE when the document declares one, else the CSS's own fallback. */
+function declaredStack(variable: string, fallback: string): string {
+  if (typeof document === 'undefined' || !document.documentElement) return fallback;
+  const declared = getComputedStyle(document.documentElement).getPropertyValue(variable).trim();
+  return declared !== '' ? declared : fallback;
 }
 
 let measuring: CanvasRenderingContext2D | null | undefined;

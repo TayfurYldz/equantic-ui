@@ -252,6 +252,9 @@ public class InvocationStrategy : IExpressionIrStrategy
             // the bucket its NAMESPACE decides. The declarative factory surface lives in the
             // shared library, so `UI.column(…)` must import UI from the runtime.
             var declaring = symbol.ContainingType;
+            // `using static …FaceName;` then a bare `Usable(...)` names the same symbol a qualified
+            // call does, and this branch returns before the fence below ever runs.
+            symbol.ReportIfHostOnly(invocation, context);
             var declaringNamespace = declaring.ContainingNamespace?.ToDisplayString() ?? string.Empty;
             if (RuntimeProvidedTypeScanner.IsRuntimeProvidedNamespace(declaringNamespace))
                 context.UsedRuntimeTypes.Add(declaring.Name);
@@ -349,6 +352,9 @@ public class InvocationStrategy : IExpressionIrStrategy
 
         var declaring = symbol.ContainingType;
         if (declaring is null) return;
+        // The fence comes FIRST and asks about the SYMBOL: a framework type that crosses can carry
+        // a member that does not, and asking only the type waves that member through.
+        if (symbol.ReportIfHostOnly(node, context)) return;
         // Declared in this compilation → it becomes a module of its own.
         if (declaring.Locations.Any(location => location.IsInSource)) return;
         if (IsFrameworkProvided(declaring)) return;
@@ -384,7 +390,11 @@ public class InvocationStrategy : IExpressionIrStrategy
         return false;
     }
 
-    /// <summary>Namespaces whose twins the runtime ships — the framework itself, and its icon packs.</summary>
+    /// <summary>
+    /// Namespaces whose twins the runtime ships — the framework itself, and its icon packs. The
+    /// host-only fence is asked separately, per SYMBOL, because a type that crosses can carry a
+    /// member that does not (<c>FaceName.IsWellFormed</c> beside <c>FaceName.Usable</c>).
+    /// </summary>
     private static bool IsFrameworkProvided(ITypeSymbol type)
     {
         var ns = type.ContainingNamespace?.ToDisplayString() ?? string.Empty;

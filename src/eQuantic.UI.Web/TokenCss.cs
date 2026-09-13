@@ -41,8 +41,31 @@ public static class TokenCss
     /// hydration.
     /// </para>
     /// </summary>
+    /// <summary>The PROPORTIONAL stack the base sheet sets on the document — the same custom
+    /// property (`equantic.css`), so a named face falls back to what the page would have used
+    /// rather than to a second opinion.</summary>
+    public const string SansStack = "var(--eq-font-family, system-ui, -apple-system, sans-serif)";
+
     public const string MonoStack =
         "var(--eq-font-mono, ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace)";
+
+    /// <summary>
+    /// A NAMED face in front of the stack that would have been used anyway. The fallback is the
+    /// point: a browser asked for a family it does not have silently draws the next one, exactly as
+    /// CoreText does — but here we get to say what the next one is, so an unavailable brand face
+    /// lands on the system stack rather than on whatever the browser felt like.
+    /// <para>
+    /// Quoted always. A family with a space in it is the common case ("IBM Plex Sans"), and an
+    /// unquoted one is a CSS parse error that takes the whole declaration with it.
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// The family must already have passed <see cref="FaceName.IsWellFormed"/>: this QUOTES, it
+    /// does not sanitise, and a family that reached here unchecked could close the style element.
+    /// The quoting stays because quoting is what CSS needs, not because it is a defence.
+    /// </remarks>
+    public static string Face(string family, bool mono) =>
+        $"\"{family}\", " + (mono ? MonoStack : SansStack);
 
     public static string Px(float dp) => dp switch
     {
@@ -303,7 +326,33 @@ public static class PhotonCssGenerator
             css.AppendLine($"  line-height: {TokenCss.Px(style.LineHeight)};");
             css.AppendLine($"  font-weight: {(int)style.Weight};");
             css.AppendLine($"  letter-spacing: {TokenCss.Px(style.Tracking)};");
+            // The face a theme cut this ROLE in, on the class rather than inline on every node. The
+            // client's lowering cannot read the theme's type scale — its component context is
+            // opaque there — so a role face emitted inline by SSR would vanish on the first
+            // client re-render. In the sheet both sides get it by not emitting anything.
+            //
+            // A mono ROLE is the same question with no family to name: it still has to reach the
+            // element, and the stack is the answer. Its white-space belongs here too — a role that
+            // is CODE keeps its indentation wherever it is used, and a rule the client cannot see
+            // is a rule SSR must not emit inline either.
+            var roleFace = FaceName.Usable(style.Family);
+            if (roleFace is { } face) css.AppendLine($"  font-family: {TokenCss.Face(face, style.Mono)};");
+            else if (style.Mono) css.AppendLine($"  font-family: {TokenCss.MonoStack};");
+            if (style.Mono) css.AppendLine("  white-space: pre-wrap;");
+            // And the slant, for the same reason as the face and the stack beside it: a theme may
+            // cut a ROLE italic, the client's lowering cannot read the type scale to know, and a
+            // slant SSR applies inline is a slant hydration drops.
+            if (style.Italic) css.AppendLine("  font-style: italic;");
             css.AppendLine("}");
+
+            // A form control does not inherit the document's face: the UA gives `input` and
+            // `textarea` a font of their own, so something must say otherwise. It used to be an
+            // inline `font-family: inherit` on every entry, which also beat the role's own family
+            // — a themed brand worked for Text and never for a field. Said HERE instead, and only
+            // for the roles whose class carries no family of its own, so the two never compete.
+            if (roleFace is null && !style.Mono)
+                css.AppendLine($".eq-entry.eq-type-{role.ToString().ToLowerInvariant()} "
+                    + "{ font-family: inherit; }");
         }
 
         // Elevation (§05) — one class per level.

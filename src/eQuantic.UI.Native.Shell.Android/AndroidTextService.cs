@@ -21,7 +21,7 @@ namespace eQuantic.UI.Native.Shell.Android;
 /// </summary>
 public sealed class AndroidTextService : ITextMeasurer, ITextRasterizer
 {
-    private readonly Dictionary<(float Size, FontWeight Weight, bool Mono, bool Italic), TextPaint> _paints = new();
+    private readonly Dictionary<(float Size, FontWeight Weight, bool Mono, bool Italic, string? Family), TextPaint> _paints = new();
 
     public TextMeasurement Measure(string content, TypeStyle style, float typeScale, float maxWidth, int maxLines)
     {
@@ -41,7 +41,7 @@ public sealed class AndroidTextService : ITextMeasurer, ITextRasterizer
         var lines = Break(content, style, typeScale, maxWidth, maxLines);
         if (lines.Count == 0) return null;
 
-        var paint = PaintFor(style.ScaledSize(typeScale) * scale, style.Weight, style.Mono, style.Italic);
+        var paint = PaintFor(style.ScaledSize(typeScale) * scale, style.Weight, style.Mono, style.Italic, style.Family);
         // Measured with the SCALED paint, because a glyph's advance is not exactly linear in its
         // size: a width taken at 1x and multiplied comes out a hair short, and the last character
         // of every line is what gets sliced off.
@@ -77,12 +77,35 @@ public sealed class AndroidTextService : ITextMeasurer, ITextRasterizer
         return new TextRaster(width, height, alpha);
     }
 
+    /// <summary>
+    /// The generic families AOSP's <c>fonts.xml</c> declares as ALIASES — the ones the platform
+    /// always answers, by name. Android hands them back as the default typeface, which is the right
+    /// answer and indistinguishable from the wrong one, so they are named rather than compared.
+    ///
+    /// <para>
+    /// Named EXACTLY, never by prefix. A prefix test on "sans-serif" exempts
+    /// <c>sans-serif-not-installed</c> too, and an exempted family is one whose absence is never
+    /// reported — the instrument turned off for precisely the values it exists to catch. (Second
+    /// time a <c>StartsWith</c> has done this here: the dev-source announce line silenced
+    /// <c>equantic-ui-web</c> the same way.)
+    /// </para>
+    /// </summary>
+    private static readonly string[] SystemAliases =
+    [
+        "sans-serif", "sans-serif-condensed", "sans-serif-condensed-light", "sans-serif-thin",
+        "sans-serif-light", "sans-serif-medium", "sans-serif-black", "sans-serif-smallcaps",
+        "sans-serif-monospace", "serif", "serif-monospace", "monospace", "casual", "cursive",
+    ];
+
+    private static bool IsSystemAlias(string family) =>
+        Array.Exists(SystemAliases, alias => alias.Equals(family, StringComparison.OrdinalIgnoreCase));
+
     private readonly record struct Line(string Text, float Width, bool Ellipsized);
 
     /// <summary>Where the lines break, and what each one ends up saying.</summary>
     private List<Line> Break(string content, TypeStyle style, float typeScale, float maxWidth, int maxLines)
     {
-        var paint = PaintFor(style.ScaledSize(typeScale), style.Weight, style.Mono, style.Italic);
+        var paint = PaintFor(style.ScaledSize(typeScale), style.Weight, style.Mono, style.Italic, style.Family);
         // An unconstrained paragraph still needs a number; the text's own width is the smallest one
         // that changes nothing.
         var wrapAt = float.IsPositiveInfinity(maxWidth)
@@ -111,9 +134,9 @@ public sealed class AndroidTextService : ITextMeasurer, ITextRasterizer
         return lines;
     }
 
-    private TextPaint PaintFor(float size, FontWeight weight, bool mono, bool italic)
+    private TextPaint PaintFor(float size, FontWeight weight, bool mono, bool italic, string? family = null)
     {
-        if (_paints.TryGetValue((size, weight, mono, italic), out var cached)) return cached;
+        if (_paints.TryGetValue((size, weight, mono, italic, family), out var cached)) return cached;
 
         var paint = new TextPaint(PaintFlags.AntiAlias | PaintFlags.SubpixelText)
         {
@@ -131,8 +154,27 @@ public sealed class AndroidTextService : ITextMeasurer, ITextRasterizer
             (false, true) => TypefaceStyle.Italic,
             _ => TypefaceStyle.Normal,
         };
-        paint.SetTypeface(Typeface.Create(mono ? Typeface.Monospace : Typeface.Default, style));
-        _paints[(size, weight, mono, italic)] = paint;
+        // Android substitutes for an unknown family like every other engine: Typeface.Create hands
+        // back the DEFAULT rather than null, so the answer is compared against that default instead
+        // of trusted.
+        //
+        // The system ALIASES are exempt from that comparison, and they have to be: "sans-serif"
+        // resolves to the default typeface, so comparing would report the platform's own family as
+        // missing — and an instrument that cries wolf on a correct value is one nobody reads by the
+        // end of the week. What is left is a brand face, which is the case this exists for.
+        var baseFace = mono ? Typeface.Monospace : Typeface.Default;
+        if (family is { Length: > 0 })
+        {
+            var named = Typeface.Create(family, style);
+            if (named is null)
+                eQuantic.UI.Primitives.FaceResolution.Missing(family);
+            else if (IsSystemAlias(family) || !named.Equals(Typeface.Create(Typeface.Default, style)))
+                baseFace = named;
+            else
+                eQuantic.UI.Primitives.FaceResolution.Missing(family);
+        }
+        paint.SetTypeface(Typeface.Create(baseFace, style));
+        _paints[(size, weight, mono, italic, family)] = paint;
         return paint;
     }
 }

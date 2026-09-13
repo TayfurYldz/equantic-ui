@@ -206,6 +206,8 @@ export class TypeStyle implements TypeStyleValue {
     readonly mono = false,
     /** The SLANTED cut — an AXIS, so it composes with weight and mono (C# `TypeStyle.Italic`). */
     readonly italic = false,
+    /** The FACE by name (C# `TypeStyle.Family`), or undefined for the platform's own. */
+    readonly family: string | undefined = undefined,
   ) {}
 
   /**
@@ -226,6 +228,10 @@ export class TypeStyle implements TypeStyleValue {
       this.maxScale,
       this.mono,
       this.italic,
+      // The face survives a resize. Dropping it here is invisible until a control that resizes its
+      // own label — SegmentedControl, Stepper — comes out in the system face beside siblings that
+      // did not resize and kept the brand's.
+      this.family,
     );
   }
 
@@ -347,3 +353,38 @@ export function cssFontWeight(weight: string | number | undefined): number {
       return 400;
   }
 }
+
+/**
+ * Twin of C# `FaceName.IsWellFormed`. What may be spelled as a font family — asked before a family
+ * is embedded, because a family is the only free-form text the style pipeline carries.
+ *
+ * A PREDICATE rather than an escaper, and deliberately: the family lands inside a `<style>` element
+ * and inside JSON in a `<script>` element, and neither a CSS string nor a JSON string neutralises
+ * `</style>` or `</script>` for the HTML parser — that needs a CSS hex escape in one context and a
+ * `\u003c` in the other. Two emitters in two languages reproducing two escape grammars identically
+ * is the divergence this repo's cross-pins exist to catch. One rule, both sides hold it.
+ *
+ * The rule must match the C# character for character: SSR emits from there and hydration from here,
+ * so a family one side accepts and the other rejects is a hydration mismatch.
+ */
+export function isWellFormedFace(family: string | null | undefined): family is string {
+  // `null` as well as `undefined`: C# `Family` is nullable and an explicitly supplied default
+  // crosses the wire AS null, so a predicate that only guarded `undefined` would throw on
+  // `family.length` in the middle of hydration — an unnamed face is the documented default, not an
+  // error.
+  if (family === null || family === undefined) return false;
+  if (family.length === 0 || family.length > 128) return false;
+  if (family[0] === ' ' || family[family.length - 1] === ' ') return false;
+  // Unicode letters and digits, so a CJK or Cyrillic family passes; the punctuation is what real
+  // families use, and nothing that means anything to CSS, JSON or HTML.
+  return /^[\p{L}\p{Nd} \-_.+]+$/u.test(family);
+}
+
+/**
+ * The twin of C# `FaceName`, under its own name — eqc routes the whole `eQuantic.UI.Primitives`
+ * namespace to `@equantic/runtime`, so a transpiled component writing `FaceName.IsWellFormed(x)`
+ * resolves here.
+ */
+export const FaceName = {
+  isWellFormed: isWellFormedFace,
+};

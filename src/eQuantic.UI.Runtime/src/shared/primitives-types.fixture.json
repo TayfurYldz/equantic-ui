@@ -51,6 +51,8 @@
   "Draggable",
   "Drawing",
   "EdgeInsets",
+  "FaceName",
+  "FaceResolution",
   "FieldError",
   "FieldRule",
   "FileFilter",

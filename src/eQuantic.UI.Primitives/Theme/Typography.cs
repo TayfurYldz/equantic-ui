@@ -41,6 +41,24 @@ public enum TypeRole : byte
 /// here is honoured by all three for free — and a face that lives anywhere else is a layout that
 /// disagrees with its own pixels.
 /// </param>
+/// <param name="Family">
+/// The FACE by name, or null for the platform's own — which is the default and what an app that
+/// has no opinion should keep. A product with a brand has one: a design handoff draws every metric
+/// against a specific family, and rendering it in the system face is a different design that
+/// nothing reports.
+/// <para>
+/// It belongs HERE for the reason <see cref="Mono"/> does: the measurer, the rasterizer and the
+/// raster cache all key on the style, so a face named here is honoured by all three and cannot
+/// drift between what was measured and what was drawn.
+/// </para>
+/// <para>
+/// Naming a face the machine does not have is the failure worth knowing about, and it is silent by
+/// nature — every text engine falls back rather than refusing. The platform services report an
+/// unresolved family rather than quietly drawing something else. What this does NOT do is make a
+/// face available: registering one the system has never seen is a separate piece, and until it
+/// exists a family only resolves if it is installed.
+/// </para>
+/// </param>
 /// <param name="Italic">
 /// The SLANTED cut of the same family — emphasis inside prose, a term being defined, the citation
 /// under a figure. Here for the same reason <see cref="Mono"/> is: a slant is a different set of
@@ -52,8 +70,46 @@ public enum TypeRole : byte
 /// own rather than a value in the weight enum.
 /// </para>
 /// </param>
-public readonly record struct TypeStyle(float Size, float LineHeight, FontWeight Weight, float Tracking, float MaxScale, bool Mono = false, bool Italic = false)
+public readonly record struct TypeStyle(float Size, float LineHeight, FontWeight Weight, float Tracking, float MaxScale, bool Mono = false, bool Italic = false, string? Family = null)
 {
+    /// <summary>
+    /// The shape this type had before it carried a face, kept so it still EXISTS in metadata.
+    /// C# optional parameters are not overloads: the default is baked into each call site, so an
+    /// assembly compiled against the seven-parameter constructor calls a signature that adding an
+    /// eighth deletes — and finds a <c>MissingMethodException</c> at load. That is not theoretical
+    /// here: a consumer compiling its own library against the released package and running it
+    /// against this tree is the arrangement the IDE pairing runs on every day.
+    /// </summary>
+    public TypeStyle(float Size, float LineHeight, FontWeight Weight, float Tracking, float MaxScale,
+        bool Mono, bool Italic)
+        : this(Size, LineHeight, Weight, Tracking, MaxScale, Mono, Italic, null)
+    {
+    }
+
+    /// <summary>
+    /// The seven-output <c>Deconstruct</c>, kept for the SAME reason and by the same rule as the
+    /// constructor above — and it is the half that is easy to forget, because nothing in the source
+    /// mentions it. A positional record SYNTHESISES one output per parameter, so adding
+    /// <see cref="Family"/> replaced the seven-output method rather than adding to it, and an
+    /// already-compiled consumer that writes <c>var (size, line, weight, tracking, scale, mono,
+    /// italic) = style;</c> binds to a signature that is no longer there.
+    /// <para>
+    /// One fix without the other is the half-fix twice over: the constructor covers construction,
+    /// this covers reading, and a consumer does both.
+    /// </para>
+    /// </summary>
+    public void Deconstruct(out float Size, out float LineHeight, out FontWeight Weight,
+        out float Tracking, out float MaxScale, out bool Mono, out bool Italic)
+    {
+        Size = this.Size;
+        LineHeight = this.LineHeight;
+        Weight = this.Weight;
+        Tracking = this.Tracking;
+        MaxScale = this.MaxScale;
+        Mono = this.Mono;
+        Italic = this.Italic;
+    }
+
     /// <summary>
     /// The effective size under an OS Dynamic Type factor: <c>Size × min(factor, MaxScale)</c>, snapped
     /// to the atlas whitelist step (0.5dp) to bound glyph memory (spec §02 engine notes).
