@@ -1,4 +1,5 @@
 using eQuantic.UI.Primitives;
+using eQuantic.UI.Web.Build;
 using eQuantic.UI.Web;
 using FluentAssertions;
 
@@ -175,6 +176,147 @@ public class NamedFaceTests
         start.Should().BeGreaterThanOrEqualTo(0, $"the sheet declares {selector}");
         var end = css.IndexOf('}', start);
         return css[start..end];
+    }
+
+    // ---- The theme's CODE face -------------------------------------------------------------------
+
+    /// <summary>
+    /// A theme could name ONE face and a handoff names two. `Family` is themeable per ROLE and
+    /// `Mono` is a per-NODE flag — a branch name is monospaced and the word beside it is not, both
+    /// Caption — so the two never met, and no shipped role sets Mono at all, which makes a
+    /// `style.Mono ? code : text` branch inside `Type()` dead code rather than the answer.
+    /// <para>
+    /// On the web it resolves through the VARIABLE the mono stack already names, so the role class,
+    /// every node that says mono, the client's own lowering and the canvas measurer all pick it up
+    /// without any of them learning about a theme they cannot see.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AThemeCanNameTheFaceItSetsCodeIn()
+    {
+        var css = PhotonCssGenerator.Generate(new CodeFacedTheme(Theme, "JetBrains Mono"));
+
+        css.Should().Contain("--eq-font-mono: \"JetBrains Mono\", ui-monospace",
+            "the declaration carries the brand in front of the stack it falls back to");
+    }
+
+    [Fact]
+    public void NoCodeFace_LeavesTheVariableUndeclared()
+    {
+        PhotonCssGenerator.Generate(Theme).Should().NotContain("--eq-font-mono:",
+            "an app with no opinion keeps the platform's own fixed-pitch face, and the hook stays free");
+    }
+
+    /// <summary>The node's own family beats the theme's default, the way specificity does everywhere
+    /// else here: the call site was specific and the theme was not.</summary>
+    [Fact]
+    public void AStyleThatNamesItsOwnFace_KeepsIt()
+    {
+        var theme = new CodeFacedTheme(Theme, "JetBrains Mono");
+        var named = Theme.Type(TypeRole.BodyM) with { Mono = true, Family = "IBM Plex Mono" };
+
+        named.WithCodeFace(theme).Family.Should().Be("IBM Plex Mono");
+        (Theme.Type(TypeRole.BodyM) with { Mono = true }).WithCodeFace(theme).Family
+            .Should().Be("JetBrains Mono", "and an unnamed one takes the theme's");
+    }
+
+    [Fact]
+    public void AProportionalStyle_NeverTakesTheCodeFace()
+    {
+        var theme = new CodeFacedTheme(Theme, "JetBrains Mono");
+
+        Theme.Type(TypeRole.BodyM).WithCodeFace(theme).Family.Should().BeNull();
+    }
+
+    /// <summary>
+    /// The merge itself, which used to be written once per realizer. The NODE adds to what the role
+    /// said and never takes away: `mono: true` on an upright role is code inside prose.
+    /// </summary>
+    [Fact]
+    public void TheNodeAddsToTheRole_AndTheCodeFaceFollows()
+    {
+        var theme = new CodeFacedTheme(Theme, "JetBrains Mono");
+        var style = new Text("git log", TypeRole.Caption) { Mono = true }.Resolve(theme);
+
+        style.Mono.Should().BeTrue();
+        style.Family.Should().Be("JetBrains Mono");
+        style.Size.Should().Be(Theme.Type(TypeRole.Caption).Size, "the role still sets the scale");
+    }
+
+    /// <summary>
+    /// The code face CROSSES. <c>IAppTheme</c> is vocabulary, so <c>context.Theme.MonoFamily</c> is
+    /// legal inside a component's Build — and a theme property the server answers and the client does
+    /// not is the hydration hole <c>[ServerOnly]</c> and EQ2010 exist to close. Carried rather than
+    /// fenced, because a theme property nobody can read is a hole in write-once.
+    ///
+    /// <para>
+    /// The three writers are checked together on purpose: the SSR bridge, the generated default
+    /// theme, and the client's rehydration (<c>theme-bridge.spec.ts</c>). The <c>family</c> half of
+    /// this same slice shipped with the C# side done and the wire not, and nothing said so.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheCodeFace_ReachesTheClient()
+    {
+        var json = ThemeBridge.SerializeJson(new CodeFacedTheme(Theme, "JetBrains Mono"));
+
+        json.Should().Contain("\"monoFamily\":\"JetBrains Mono\"");
+    }
+
+    /// <summary>A theme with no opinion sends the payload it always sent — the type tail's rule, for
+    /// the same reason: the common case must stay byte-identical.</summary>
+    [Fact]
+    public void NoCodeFace_AddsNothingToTheWire()
+    {
+        ThemeBridge.SerializeJson(Theme).Should().NotContain("monoFamily");
+    }
+
+    /// <summary>
+    /// A family no emitter will accept does not reach the wire here either. It lands inside JSON in
+    /// a <c>&lt;script&gt;</c> element, where quoting is not the defence it looks like: a JSON string
+    /// does not neutralise <c>&lt;/script&gt;</c> for the HTML parser.
+    /// </summary>
+    [Fact]
+    public void AMonoFaceThatWouldCloseTheScriptElement_NeverReachesTheWire()
+    {
+        var json = ThemeBridge.SerializeJson(
+            new CodeFacedTheme(Theme, "</script><script>alert(1)</script>"));
+
+        json.Should().NotContain("monoFamily");
+        json.Should().NotContain("<script");
+    }
+
+    /// <summary>The generated default theme is the client's OTHER producer, and it mirrors the
+    /// bridge — two mirrors that disagree is what makes one of them stale.</summary>
+    [Fact]
+    public void TheGeneratedTheme_CarriesTheCodeFaceToo()
+    {
+        DesignSystemTsGenerator.Generate(new CodeFacedTheme(Theme, "JetBrains Mono"))
+            .Should().Contain("monoFamily: 'JetBrains Mono'");
+        DesignSystemTsGenerator.Generate(Theme).Should().NotContain("monoFamily");
+    }
+
+    private sealed class CodeFacedTheme(IAppTheme inner, string mono) : IAppTheme
+    {
+        public string? MonoFamily => mono;
+        public ColorToken Background => inner.Background;
+        public ColorToken Surface => inner.Surface;
+        public ColorToken SurfaceSubtle => inner.SurfaceSubtle;
+        public ColorToken SurfaceHighlight => inner.SurfaceHighlight;
+        public ColorToken Border => inner.Border;
+        public ColorToken BorderStrong => inner.BorderStrong;
+        public ColorToken TextPrimary => inner.TextPrimary;
+        public ColorToken TextSecondary => inner.TextSecondary;
+        public ColorToken TextMuted => inner.TextMuted;
+        public ColorToken TextInverse => inner.TextInverse;
+        public ColorToken FocusRing => inner.FocusRing;
+        public ColorToken LinkColor => inner.LinkColor;
+        public ColorToken Scrim => inner.Scrim;
+        public float DisabledOpacity => inner.DisabledOpacity;
+        public VariantColors Colors(Variant variant) => inner.Colors(variant);
+        public TypeStyle Type(TypeRole role) => inner.Type(role);
+        public ShadowSpec Elevation(int level) => inner.Elevation(level);
+        public float Shape(ShapeScale scale) => inner.Shape(scale);
     }
 
     // ---- The released surface -------------------------------------------------------------------

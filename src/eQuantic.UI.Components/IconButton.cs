@@ -24,6 +24,25 @@ public enum IconButtonKind : byte
 /// </summary>
 public sealed class IconButton : StatelessComponent
 {
+    /// <summary>
+    /// The glyph as a NODE, and the ONLY constructor — because the twin is JavaScript.
+    ///
+    /// <para>
+    /// A transpiled component gets ONE JS constructor, so C# overloads do not survive: adding
+    /// `IconButton(Icons …)` and `IconButton(IconGlyph …)` produced a twin that still assigned
+    /// whatever it was handed straight to `glyph`, the delegation to `new Icon(...)` vanished, and
+    /// every caller passing a glyph crashed on `undefined.viewBox` at runtime. `Icon` gets away with
+    /// two constructors because its twin is HAND-WRITTEN and takes a `string | IconGlyph` union;
+    /// this one is generated from this file.
+    /// </para>
+    ///
+    /// <para>
+    /// So the convenience lives one level down, in the GLYPH factories, which is the authoring path
+    /// anyway: `Icon(Icons.Close)` for a curated glyph and `Glyph(LucideIcons.Power)` for a pack's,
+    /// each producing the node this takes — `IconButton(Icon(Icons.Close), "Close")`. There is no
+    /// per-pack button factory, and an earlier draft of this comment named one that never existed.
+    /// </para>
+    /// </summary>
     public IconButton(Icon glyph, string label, IconButtonKind kind = IconButtonKind.Standard,
         SizeVariant size = SizeVariant.Medium, Action? onPressed = null)
     {

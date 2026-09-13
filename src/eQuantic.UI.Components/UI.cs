@@ -411,7 +411,17 @@ public static class UI
     public static CultureSwitcher CultureSwitcher(IReadOnlyList<CultureOption> options) =>
         new CultureSwitcher(options);
 
-    /// <summary>Icon-only button; the label is what assistive tech announces.</summary>
+    /// <summary>
+    /// Icon-only button; the label is what assistive tech announces and is never optional — an
+    /// icon-only button is the one control with no text of its own to fall back on.
+    /// <para>
+    /// Takes the glyph as a NODE, and mirrors the constructor exactly, because both rules that
+    /// govern this surface point the same way: a transpiled component gets ONE JS constructor, and
+    /// a factory mirrors its constructor parameter-for-parameter so named arguments carry between
+    /// the two forms. `Icon(Icons.Close)` and `Glyph(LucideIcons.Search)` are how a glyph becomes
+    /// one, which is the same shape every other node uses.
+    /// </para>
+    /// </summary>
     public static IconButton IconButton(Icon glyph, string label,
         IconButtonKind kind = IconButtonKind.Standard, SizeVariant size = SizeVariant.Medium,
         Action? onPressed = null) =>
