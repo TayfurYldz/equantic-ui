@@ -219,20 +219,54 @@ describe('the first measurement corrects a cold load that landed under the chrom
 
   /**
    * jsdom reports `complete` from the first line of the file, so a spec that does not say otherwise
-   * exercises the already-loaded branch and NEVER the `load` listener — which is the branch a real
-   * cold load takes, and the only one that matters. Stated rather than inherited.
+   * runs every case as though the page had already settled — which is the one column a real cold
+   * load is NOT in, and the column the first version of this fix was blind to. `readyState` decides
+   * when the frame budget starts counting, so it is stated here rather than inherited.
    */
   function stillLoading(): void {
     Object.defineProperty(document, 'readyState', { value: 'loading', configurable: true });
   }
 
+  function loaded(): void {
+    Object.defineProperty(document, 'readyState', { value: 'complete', configurable: true });
+  }
+
+  /**
+   * Frames, driven by hand. The correction watches a WINDOW of them rather than one event, because
+   * the browser's fragment jump lands in some frame and no event names which — so a spec that
+   * cannot step frames cannot express the ordering this file is about.
+   */
+  let pending: Array<() => void> = [];
+
+  function frame(times = 1): void {
+    for (let i = 0; i < times; i++) {
+      const due = pending;
+      pending = [];
+      for (const callback of due) callback();
+    }
+  }
+
+  const realRaf = window.requestAnimationFrame;
+  const realNow = performance.now;
+  let clock = 0;
+
   beforeEach(() => {
     resetColdLoadRealignmentForTests();
+    pending = [];
+    clock = 0;
+    performance.now = () => clock;
+    window.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+      pending.push(() => cb(0));
+      return pending.length;
+    }) as typeof window.requestAnimationFrame;
     document.documentElement.style.removeProperty('--eq-anchor-offset');
     window.history.replaceState(null, '', '/probe');
   });
 
   afterEach(() => {
+    window.requestAnimationFrame = realRaf;
+    performance.now = realNow;
+    pending = [];
     Object.defineProperty(document, 'readyState', { value: 'complete', configurable: true });
     document.body.innerHTML = '';
     window.history.replaceState(null, '', '/probe');
@@ -304,13 +338,13 @@ describe('the first measurement corrects a cold load that landed under the chrom
    *
    * <para>
    * `publishAnchorOffset` runs after a pass, and a settled page has none — so on a live site the
-   * correction's second chance cannot come from another measurement. It has to ride the document's
-   * own `load`, which is the event that says the layout the browser jumped against is final. Without
-   * that, moving the one-shot flag onto the correction fixes nothing here: the page simply stays
-   * behind the header with the flag still armed and nobody left to read it.
+   * correction's second chance cannot come from another measurement. It comes from WATCHING: the
+   * jump lands in some frame and no event names which, so the window looks every frame until the
+   * target is in the band. Without that, moving the one-shot flag onto the correction fixes nothing
+   * here — the page stays behind the header with the flag still armed and nobody left to read it.
    * </para>
    */
-  it('takes its second chance from `load` when no further pass ever comes', () => {
+  it('takes its second chance from the frame window when no further pass ever comes', () => {
     stillLoading();
     const bar = chrome(64);
     const target = bookmark('rights', 3992);
@@ -319,28 +353,30 @@ describe('the first measurement corrects a cold load that landed under the chrom
     publishAnchorOffset();
     expect(target.seen()).toBe(0);
 
-    // The browser finishes its jump as the last of the layout settles, and then the document loads.
+    // The browser's jump settles before the next watched frame runs — which is the ordering this
+    // case is about, and the one no event announces.
     target.moveTo(0);
-    window.dispatchEvent(new Event('load'));
+    frame();
 
     expect(target.seen()).toBe(1);
     bar.remove();
   });
 
   /**
-   * And the chance is spent for good once `load` has passed, so a reader who scrolls the target
+   * And the chance is spent for good once the window closes, so a reader who scrolls the target
    * into the band later is never yanked. This is what the A/B against the plausible wrong fix
    * — "spend the flag on the correction instead of the measurement" — lands on: on its own that
    * leaves the page armed forever.
    */
-  it('is retired by `load` even when it had nothing to correct', () => {
+  it('is retired by the window even when it had nothing to correct', () => {
     stillLoading();
     const bar = chrome(64);
     const target = bookmark('rights', 3992);
     window.history.replaceState(null, '', '/probe#rights');
 
     publishAnchorOffset();
-    window.dispatchEvent(new Event('load')); // still out of the band: nothing to do, chance spent
+    loaded();
+    frame(40); // the window closes: still out of the band throughout, chance spent
 
     // The reader now scrolls the target into the band by hand. Nothing may move.
     target.moveTo(10);
@@ -375,7 +411,7 @@ describe('the first measurement corrects a cold load that landed under the chrom
     // the 64 that booked this, still buried under the 80 the header now is.
     bar.growTo(80);
     target.moveTo(70);
-    window.dispatchEvent(new Event('load'));
+    frame();
 
     expect(target.seen()).toBe(1);
     expect(document.documentElement.style.getPropertyValue('--eq-anchor-offset')).toBe('80px');
@@ -403,7 +439,7 @@ describe('the first measurement corrects a cold load that landed under the chrom
     expect(target.seen()).toBe(0);
 
     bar.growTo(64); // the header's image finally decodes
-    window.dispatchEvent(new Event('load'));
+    frame();
 
     expect(target.seen()).toBe(1);
     bar.remove();
@@ -417,7 +453,8 @@ describe('the first measurement corrects a cold load that landed under the chrom
     window.history.replaceState(null, '', '/probe');
 
     publishAnchorOffset();
-    window.dispatchEvent(new Event('load'));
+    loaded();
+    frame(40);
 
     expect(target.seen()).toBe(0);
     bar.remove();
@@ -448,11 +485,11 @@ describe('the first measurement corrects a cold load that landed under the chrom
     document.documentElement.style.removeProperty('--eq-anchor-offset');
 
     // …and the PREVIOUS document's deferred work lands now, before this one has measured anything.
+    frame();
     // Ungenerationed it retires the flag here, and the correction below then finds its one chance
     // already spent — the suppression this guard exists for, and the reason the first version of
     // this case proved nothing: with both documents sharing a hash, the stale callback happened to
     // do the right thing by accident and the test passed either way.
-    window.dispatchEvent(new Event('load'));
 
     const bar = chrome(64);
     const target = bookmark('rights', 0); // squarely in the band: this one MUST be corrected
@@ -461,6 +498,254 @@ describe('the first measurement corrects a cold load that landed under the chrom
 
     expect(staleTarget.seen()).toBe(0);
     expect(target.seen()).toBe(1);
+    bar.remove();
+  });
+
+  /**
+   * THE COLUMN THE FIRST FIX WAS BLIND TO: a WARM load, where the document is complete before the
+   * browser has performed its fragment jump.
+   *
+   * <para>
+   * Measured on a live site, same URL and same bytes, with the cache as the only variable:
+   * </para>
+   *
+   * <para>
+   * <c>cold, loadEventEnd 1310ms → target at 65, correct.</c><br/>
+   * <c>warm, loadEventEnd 36ms → target at 0, wrong.</c>
+   * </para>
+   *
+   * <para>
+   * The failing case lands at the anchor's exact document offset, which is where a jump with no
+   * scroll-margin puts it — so nothing scrolled OVER the correction, the correction never ran. A
+   * single chance taken at `load` was a bet that `load` comes after the jump, and the faster the
+   * page the more reliably it does not. A returning visitor is almost everyone, and a test that
+   * loads instantly is always in this column, which is why 1,036 of them never saw it. The watch
+   * replaced that bet with frames; `load` survives here only as the thing that was measured.
+   * </para>
+   */
+  it('corrects a WARM load, where the document completed before the browser jumped', () => {
+    loaded(); // 36ms: complete already, and the jump has not happened
+    const bar = chrome(65);
+    const target = bookmark('rights', 3992); // still where the document put it
+    window.history.replaceState(null, '', '/probe#rights');
+
+    publishAnchorOffset();
+    expect(target.seen()).toBe(0);
+
+    // The browser performs its jump a frame or two later, with scroll-margin-top still 0px.
+    frame(2);
+    target.moveTo(0);
+    frame();
+
+    expect(target.seen()).toBe(1);
+    bar.remove();
+  });
+
+  /** And the window is long enough to be worth having: a jump several frames out is still caught. */
+  it('is still watching several frames after the document completed', () => {
+    loaded();
+    const bar = chrome(65);
+    const target = bookmark('rights', 3992);
+    window.history.replaceState(null, '', '/probe#rights');
+
+    publishAnchorOffset();
+    frame(10);
+    target.moveTo(0);
+    frame();
+
+    expect(target.seen()).toBe(1);
+    bar.remove();
+  });
+
+  /**
+   * A page that NEVER completes must not be watched forever.
+   *
+   * <para>
+   * The frame budget only starts counting once `readyState` is complete, which is right — before
+   * that the browser may still have a jump to perform. But a stalled subresource can hold a page
+   * non-complete for the life of the tab, and a budget that never starts is a rAF loop reading
+   * layout every frame for all of it. Found in review.
+   * </para>
+   */
+  it('stops watching a page that never completes', () => {
+    stillLoading();
+    const bar = chrome(65);
+    const target = bookmark('rights', 3992); // never enters the band
+    window.history.replaceState(null, '', '/probe#rights');
+
+    publishAnchorOffset();
+    frame(40);
+    // Still watching, because the wall clock has not run out.
+    expect(pending.length).toBeGreaterThan(0);
+
+    clock += 10_001; // the watch's own bound, with readyState still 'loading'
+    frame();
+
+    expect(pending).toHaveLength(0);
+
+    // …and it is retired, not merely idle: the reader scrolling into the band later moves nothing.
+    target.moveTo(10);
+    document.documentElement.style.removeProperty('--eq-anchor-offset');
+    publishAnchorOffset();
+    expect(target.seen()).toBe(0);
+    bar.remove();
+  });
+
+  /**
+   * Without `requestAnimationFrame` the watch uses a TIMER, never a direct call. Invoking the
+   * callback synchronously is unbounded recursion on a loading document, and burns the whole budget
+   * in one stack frame on a complete one — both before the browser could perform the jump being
+   * waited for. Found in review.
+   */
+  it('falls back to a timer, not to calling itself', () => {
+    stillLoading();
+    const raf = window.requestAnimationFrame;
+    // @ts-expect-error — the environment this guards against is one with no rAF at all.
+    delete window.requestAnimationFrame;
+    const timers: Array<() => void> = [];
+    const realTimeout = window.setTimeout;
+    window.setTimeout = ((cb: () => void) => {
+      timers.push(cb);
+      return timers.length;
+    }) as typeof window.setTimeout;
+
+    try {
+      const bar = chrome(65);
+      const target = bookmark('rights', 3992);
+      window.history.replaceState(null, '', '/probe#rights');
+
+      // Returns rather than recursing: one timer is booked and nothing has run yet.
+      publishAnchorOffset();
+      expect(timers).toHaveLength(1);
+
+      target.moveTo(0);
+      timers.pop()!();
+      expect(target.seen()).toBe(1);
+      bar.remove();
+    } finally {
+      window.setTimeout = realTimeout;
+      window.requestAnimationFrame = raf;
+    }
+  });
+
+  /**
+   * A BACKGROUND TAB keeps `requestAnimationFrame` defined and stops calling it back. Guarding on
+   * `typeof` is therefore not enough: the rAF branch is taken, nothing runs, and neither the frame
+   * budget nor the wall clock is enforced — the watch stays armed until the tab returns and could
+   * yank a reader long past its own deadline. Found in review, and the timer beside rAF is what
+   * makes the bound hold rather than the correction happen.
+   */
+  it('is still bounded when frames are suspended and only timers run', () => {
+    stillLoading();
+    const timers: Array<() => void> = [];
+    const realTimeout = window.setTimeout;
+    window.setTimeout = ((cb: () => void) => {
+      timers.push(cb);
+      return timers.length;
+    }) as typeof window.setTimeout;
+
+    try {
+      const bar = chrome(65);
+      const target = bookmark('rights', 3992); // never enters the band
+      window.history.replaceState(null, '', '/probe#rights');
+
+      publishAnchorOffset();
+      // rAF was called and will never call back, the way a hidden tab behaves. `pending` holds the
+      // frame nobody will run; the timer beside it is the only thing that moves.
+      expect(pending.length).toBeGreaterThan(0);
+      expect(timers.length).toBeGreaterThan(0);
+
+      clock += 10_001;
+      while (timers.length > 0) timers.pop()!();
+
+      // Retired by the clock, through the timer alone — no frame ever ran.
+      target.moveTo(10);
+      document.documentElement.style.removeProperty('--eq-anchor-offset');
+      publishAnchorOffset();
+      expect(target.seen()).toBe(0);
+      bar.remove();
+    } finally {
+      window.setTimeout = realTimeout;
+    }
+  });
+
+  /**
+   * A tick that arrives AFTER the deadline corrects nothing.
+   *
+   * <para>
+   * Ticks can be late: rAF resumes when a background tab returns, a backstop timer runs when the
+   * event loop gets to it. Correcting on one of those is the yank the bound exists to prevent,
+   * performed by the instrument meant to stop it — so the deadline is checked BEFORE the
+   * correction, not after. Found in review, and it is the order I had already described in an
+   * earlier round of this PR and then not written.
+   * </para>
+   */
+  it('a tick arriving past the deadline corrects nothing', () => {
+    stillLoading();
+    const bar = chrome(65);
+    const target = bookmark('rights', 3992); // out of the band while the watch is legitimate
+    window.history.replaceState(null, '', '/probe#rights');
+
+    publishAnchorOffset();
+    frame(3);
+    expect(target.seen()).toBe(0);
+
+    // The tab was hidden for a while. The reader comes back having scrolled the target into the
+    // band by hand, and the frame that was queued finally runs.
+    clock += 10_001;
+    target.moveTo(10);
+    frame();
+
+    expect(target.seen()).toBe(0);
+    bar.remove();
+  });
+
+  /**
+   * The watch belongs to the VIEW it was booked in. This runtime is a SPA: the router pushes state
+   * on the same document and applies each new fragment scroll itself, so a cold-load watch still
+   * alive across a navigation would read the NEW `location.hash` and scroll to somebody else's
+   * target. Found in review.
+   */
+  it('does not follow the reader into another view', () => {
+    stillLoading();
+    const bar = chrome(65);
+    const first = bookmark('rights', 3992);
+    window.history.replaceState(null, '', '/probe#rights');
+    publishAnchorOffset();
+    frame(2);
+    expect(first.seen()).toBe(0);
+
+    // The router navigates. A different page, a different anchor, squarely in the band.
+    const second = bookmark('liability', 0);
+    window.history.replaceState(null, '', '/terms#liability');
+    frame();
+
+    expect(second.seen()).toBe(0);
+    expect(first.seen()).toBe(0);
+    bar.remove();
+  });
+
+  /**
+   * Expiry belongs to the SHARED path, not to the deferred tick's closure. `publishAnchorOffset`
+   * calls the correction directly on any later render pass whose measurement changed, so a bound
+   * that lived only in the tick left that door open — a background render an hour in could still
+   * yank a reader. Found in review.
+   */
+  it('a later render pass cannot correct past the deadline either', () => {
+    stillLoading();
+    const bar = chrome(65);
+    const target = bookmark('rights', 3992);
+    window.history.replaceState(null, '', '/probe#rights');
+    publishAnchorOffset();
+
+    // Frames and timers are suspended for longer than the watch is allowed to live, and then a
+    // render pass changes the header height — the direct path, with no tick involved.
+    clock += 10_001;
+    target.moveTo(10);
+    bar.growTo(80);
+    publishAnchorOffset();
+
+    expect(target.seen()).toBe(0);
     bar.remove();
   });
 
