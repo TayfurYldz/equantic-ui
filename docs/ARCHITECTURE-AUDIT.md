@@ -15,6 +15,25 @@ rot. What holds each claim here:
 | the handoff speaks the vocabulary's current names | `HandoffVocabularyTests` |
 | the handoff's numbers are the SDK's numbers | `HandoffTokenPinTests` |
 | every Flutter row is findable, and every gap still a gap | `FlutterParityPinTests` — 64 rows |
+| the vocabulary is closed: outside `Primitives` a node is a `UiComponent` or nothing | `ClosedHierarchyTests` — both graphs, the scan derived from the output directory (#138) |
+| a measurer that claims the trailing mark draws it, and one that withholds it still does not | `TruncationContractTests` — every measurer the machine hosts, the count asserted (#123, #136) |
+| the wiki speaks the tree's current names | `WikiVocabularyTests` — both languages, allowances checked both ways |
+| the suite runs where the code runs | `ci.yml` — `build-packages` on macOS and the `test` job on Ubuntu and Windows, every project under `tests/` (#139) |
+
+**Until 2026-09-14 the suite ran on one operating system**, and the record stays because the cost
+was measured. `ci.yml` had exactly one `dotnet test`, in `build-packages`, on `macos-latest`; the
+three-runner matrix only packed the bun packages. Every pin above with a Windows or Linux arm was
+asserted nowhere but on a developer's machine, and #136 is the case: `ACutLine_FillsTheBoxFurtherThanAWrappedOne`
+failed on Windows from the day #123 wrote it, because DirectWrite cuts without a mark and the only
+suite that would have said so never ran there. #139 runs every project under `tests/` on the three
+runners, and its first red is the measurement that paragraph asked for: `double.RootN(27.0, 3)` is
+`3` on macOS and `3.0000000000000004` on Linux — .NET delegates to the platform's libm, so "identical
+to .NET" carried a hidden assumption, now fenced at one ULP with the difference named; two Windows
+defects in the design-origin tests, a POSIX path literal and the same test comparing a JavaScript
+string literal's escaping to a raw path; and `tests/eQuantic.UI.Heroicons.Tests` and
+`tests/eQuantic.UI.Lucide.Tests`, which were not in `eQuantic.UI.sln`, so a developer's `dotnet test` at
+the root ran eight projects while CI's `find` over `tests/` ran ten — the two instruments agreed by
+accident. Both are in the solution now.
 
 The counts that carry no pin — lines, fields, how many times a word appears — are dated by the line
 above and will drift. They are here to SIZE a decision, not to be believed a year on.
@@ -158,6 +177,20 @@ The first version of the matcher read the whole file, so an arm in `MinContentWi
 about `MeasureCore`, and an `Overlay` the engine does size sat in an exemption list saying it never got
 there. Review caught both. The pin is the instrument, not the fix; when the last switch is a visitor,
 it retires.
+
+**The set is closed by construction now, not by counting (S1, #138).** `VisualNode` and `FlexNode`
+have `private protected` constructors, the 39 concrete nodes are `sealed`, `UiComponent.Accept` is
+sealed, and every node has its one-line `Accept`. `ClosedHierarchyTests` holds it over both graphs:
+outside `Primitives`, anything assignable to `VisualNode` is a `UiComponent`; inside, no abstract node
+but the component seam has an accessible constructor. Two lessons from writing that pin are now rules
+of the plan. The assemblies it scans are DERIVED — every `eQuantic.*.dll` in the test's own output
+directory that references the vocabulary — because the list this document first specified was short
+by two, then by five, depending on which tests had run before it and so what the AppDomain happened
+to hold; a pin whose answer changes with the run order is worse than the list it checks. And its A/B
+was done inside the graph it guards: a stranger node declared in the TEST project left the pin green,
+because test assemblies are excluded on purpose, and only the same stranger inside `eQuantic.UI.Web`
+made it fail and name the type. The pin asserts both graphs are in its scan, so that A/B keeps its
+meaning.
 
 ---
 
@@ -400,19 +433,32 @@ one question, and the one with a type is the one the other two cannot reference.
 `SemanticRole` and `SemanticNode` to `Primitives`, per-target bridges staying where they are — blocked
 only by the `Rect` of section 4.
 
-**And a truncated line ends four different ways.** `ITextMeasurer.Measure` promises text "truncated
-to `maxLines` with a trailing ellipsis". The web draws one (`text-overflow: ellipsis`, and the
-multi-line clamp). Android's measurer appends `…` itself. CoreText and DirectWrite cut the line and
-draw nothing, and CoreText's class doc calls that a v1 fence — a decision about every target's text,
-written in one target's file, where the neutral side never reads it. The one bit that would let the
-realizer draw the mark uniformly for all three, `MeasuredLine.Ellipsized`, is written by every
-measurer and read by no product code: its only readers are three tests, one of which asserts "the
-shrunk text ellipsizes" against a measurer that does not. *How does Flutter solve it?* `TextPainter`
-owns `ellipsis` and `maxLines` in the neutral `painting` layer; the platform shaper only measures.
-Ours is the same move: the realizer appends the mark when `Ellipsized` says a line was cut, the three
-measurers stop deciding, and the contract stops promising what one of them does. Same family as
-`Text.Align` (#103) — the property one realizer honours and another drops in silence — found by the
-IDE consumer's session and measured here.
+**And a truncated line ended four different ways.** `ITextMeasurer.Measure` promised text "truncated
+to `maxLines` with a trailing ellipsis". The web drew one (`text-overflow: ellipsis`, and the
+multi-line clamp). Android's measurer appended `…` itself. CoreText and DirectWrite cut the line and
+drew nothing, and CoreText's class doc called that a v1 fence — a decision about every target's text,
+written in one target's file, where the neutral side never read it. Nothing asked the implementations
+whether they met the promise. *How does Flutter solve it?* `TextPainter` owns `ellipsis` and
+`maxLines` in the neutral `painting` layer; the platform shaper only measures. This document's first
+answer was to copy that move literally — the realizer appends the mark when `MeasuredLine.Ellipsized`
+says a line was cut. Measuring the measurers undid it: each one shares its layout helper with its
+rasterizer, so a mark added downstream is a mark the glyphs were never shaped with, and the width
+measured and the line drawn stop agreeing. What Flutter's move actually says is
+*truncate where the line is made*, and that is what landed (#123): the contract now reads THE MARK IS
+INSIDE THE MEASUREMENT, CoreText truncates in its own layout through one helper called by both
+`Measure` and `Rasterize`, and `TruncationContractTests` asks every measurer the machine hosts — with
+the count asserted, so a suite whose subjects failed to load fails instead of reporting nothing. Its
+discriminating assertion took three attempts: "the cut line fits the box" is true of the unfixed code
+by construction; what separates a truncation from a wrap is that it runs to the character and pays for
+the mark, so a cut line measures WIDER than the first line the same text wraps to. Then `.53` shipped
+CoreText cutting the MIDDLE — a literal `2` with a comment calling it End, where the header says
+`Middle` — and the fix (#136) transcribed `CTLineTruncationType` and added the assertion nothing had
+asked: which SIDE survives. DirectWrite still cuts without a mark; it needs `SetTrimming` and a Windows
+box to verify on, and the roster carries it as WITHHOLDING, with its own assertion that a cut line
+there measures exactly as wide as the wrap, so the exemption fails the day it closes. `Ellipsized`
+stays as the analogue of `didExceedMaxLines`, read by no realizer. Same family as `Text.Align` (#103)
+— the property one realizer honours and another drops in silence — found by the IDE consumer's session,
+measured here, and half of it found again by the same consumer reading a header.
 
 ### What a misplaced type had already copied
 
@@ -522,7 +568,20 @@ Worth recording, because an audit that only lists faults misleads about the whol
 
 - **The transpiler is the bar it is said to be**: 142 strategy files behind one `IConversionStrategy`
   and one registry, an IR with one writer per level, and four baselines that may only shrink
-  (`ir-migration`, `bcl-surface`, `diagnostics`, `conversion-gaps`).
+  (`ir-migration`, `bcl-surface`, `diagnostics`, `conversion-gaps`). And its fence is enumerated, not
+  guessed: `HostOnlySymbolExtensions` counts the ways a symbol can be named in a component, and its
+  doc owes the count. Moving geometry into the vocabulary (#135) found the count short by three — it
+  said four and is seven: an explicit CONSTRUCTION (`new Matrix2D(...)` passed where
+  `Matrix2D.Identity` was stopped), a target-typed `new`, a TYPE POSITION (`public Matrix2D Placement
+  { get; init; }` on a component is not an expression, so no strategy ever sees it; only the parser's
+  semantic sweep does, which is where a name becomes an import — measured: it compiled and emitted
+  `import { Matrix2D } from "@equantic/runtime"`), and an OPERATOR. The operator is the one to quote,
+  because it is the only branch that failed in SILENCE: every other way of naming a host-only symbol
+  took the page down, while `a + b` on two `Point`s emitted JavaScript's own `+` and concatenated two
+  objects into a string, in a page that compiled and rendered on the server. `[ServerOnly]` may sit on
+  a struct now, and the `diagnostics` baseline stopped the fix itself twice — a branch writing its
+  message inline instead of through the shared reporter, and the emitter legitimately becoming a
+  second reporting site — before a reviewer had to. And the fence follows an override (#138): `[ServerOnly]` sits on the abstract `Accept` only, because repeating it on 39 implementations is a rule the fortieth forgets, and the walk goes from the call site's `OriginalDefinition` — a call to a generic method binds to the CONSTRUCTED symbol, `Accept<int, int>`, which overrides nothing, so the first version walked `OverriddenMethod` and found no attribute at all.
 - **The engine is a real RHI**: `IRenderBackend` / `IRhiDevice` / `IRhiCommandList` / `IRhiTexture`
   with three backends — Metal, Vulkan, Reference — behind them, and parity suites between them.
 - **Platform interop is typed**: sixteen capability interfaces, resolved by `GetService<T>()`, absent
@@ -540,9 +599,14 @@ Worth recording, because an audit that only lists faults misleads about the whol
   parameter, with three named exceptions listed by name.
 - **The pins exist, and they are the pattern**: `FlutterParityPinTests` (64 rows, a probe each),
   `HandoffTokenPinTests`, `VocabularyCoverageTests` (six doors), `AssemblyLayeringTests`,
-  `HandoffVocabularyTests`, `MarkerParityTests`, `LabelledNodesReachSemanticsTests`, the transpiled
-  fixtures byte-pinned against the live compiler, the design-system TypeScript byte-pinned against its
-  generator. 2,678 xUnit facts and theories across ten projects, 830 vitest cases across 127 specs.
+  `ClosedHierarchyTests` (both graphs, the scan derived), `ValueShapeCollisionTests` (the whole native
+  graph, a sentence per excused shape group, failing both ways), `TruncationContractTests` (claimants
+  and withholders alike), `HandoffVocabularyTests`, `WikiVocabularyTests`, `MarkerParityTests`,
+  `LabelledNodesReachSemanticsTests`, the transpiled fixtures byte-pinned against the live compiler,
+  the design-system TypeScript byte-pinned against its generator. 4,435 xUnit cases (20 skipped, none
+  failing) across ten test projects, and 1,045 vitest cases across 127 specs. Both were counted by
+  running them at 741eb488 on 2026-09-14: `dotnet test` for the xUnit suites, and
+  `dotnet build src/eQuantic.UI.Runtime -t:TestRuntime` for the runtime's.
 - **The handoff is clean of the retired words**, as of this pass, and will fail the build the day it
   is not.
 
@@ -583,9 +647,10 @@ makes the rest safe.
 6. ~~**Two of everything at the web seam**~~ done: `RouteData` → `RouteValues` (C# and TypeScript),
    `RenderContext`'s provider, global fallback and instance dictionary → `CapabilityScope`, and the
    link policy left on the web with the reason written where it is felt. — S
-7. **The truncation mark**: the realizer draws `…` when `MeasuredLine.Ellipsized` says a line was cut
-   (Flutter: `TextPainter.ellipsis`), the three measurers stop appending or fencing it, the contract
-   says what happens, and the test that asserts an ellipsis asserts a real one. — S
+7. **The truncation mark**: the mark is inside the measurement (Flutter: truncate where the line is
+   made). Done for CoreText (#123, #136), already true of Android and the web; `TruncationContractTests`
+   holds the contract over every measurer it can host. Open: DirectWrite (`SetTrimming`, needs a
+   Windows box), asserted as withholding until then. — S — three of four targets
 8. **The adapter's shadow**: the compile-time evaluator, `CssEmitter`, `StyleClass`, the four
    documents; `Tokens.handoff.cs`; the two finished June plans; `IComponent.cs` prose. — S, after
    Edgar confirms `ClassBuilder` stays the escape hatch
