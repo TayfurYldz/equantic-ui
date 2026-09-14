@@ -152,15 +152,14 @@ public class VocabularyCoverageTests
             "LowerNodeKind",
             "what DOM does the server write",
             Language.CSharp,
-            // A REAL GAP WEARING AN EXEMPTION — the seventh defect of this family, and the one this
-            // dispatch's arrival here found. Both surfaces fall through `_ => null`, and the server
-            // renders an EMPTY SPAN where the browser draws a code editor or a spreadsheet: the
-            // first paint lacks them, a crawler never sees their text, and hydration has to mount
-            // what the server never sent. So since the day each shipped (05ef6f1b, d8be2bd6 —
-            // August 2026); proved by lowering `new CodeSurface(new Text("hello"), …)` and finding
-            // no "hello" in the HTML. The fix is the SSR skeleton lowering.ts already produces for
-            // each, cross-pinned like every other rule the two share.
-            "CodeSurface", "SheetSurface"),
+            // `SheetSurface` left this list when the server learned to write it. `CodeSurface` is
+            // still here, and the reason CHANGED rather than survived: it is no longer "nobody
+            // noticed", it is that the client appends a caret to every code surface and the server
+            // has no business rendering a caret. Emitting only the child would give hydration a tree
+            // one element short, which the reconciler records as a failed adoption — so the shape
+            // has to be settled before the arm is worth having, and settling it needs a running
+            // page rather than a guess. `SurfaceSsrTests` holds the half that is done.
+            "CodeSurface"),
 
         new("EmailRealizer",
             "src/eQuantic.UI.Email/EmailRealizer.cs",

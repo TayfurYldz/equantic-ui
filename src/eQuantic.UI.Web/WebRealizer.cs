@@ -184,6 +184,7 @@ public static class WebRealizer
         Primitives.Image image => LowerImage(image),
         CameraPreview camera => LowerCameraPreview(camera),
         WebFrame frame => LowerWebFrame(frame),
+        SheetSurface sheet => LowerSheetSurface(sheet, context, horizontalAxis),
         Pressable pressable => LowerPressable(pressable, context),
         Hoverable hoverable => LowerHoverable(hoverable, context),
         Simulated simulated => LowerSimulated(simulated, context, horizontalAxis),
@@ -1495,6 +1496,42 @@ public static class WebRealizer
             SizeKind.Fill => "100%",
             _ => null, // hug = the element's own default
         };
+    }
+
+    /// <summary>
+    /// The sheet's SKELETON, server-side. It rendered as an empty span to anything that does not run
+    /// scripts — no arm here, so `_ => null` caught it, from the day it shipped (d8be2bd6).
+    ///
+    /// <para>
+    /// <c>user-select: none</c> because a drag on a grid extends the SHEET's selection, and the
+    /// browser's native text sweep would paint over the band the component draws.
+    /// </para>
+    /// </summary>
+    private static HtmlElement LowerSheetSurface(
+        SheetSurface sheet, ComponentContext context, bool? horizontalAxis)
+    {
+        var attributes = new Dictionary<string, string>
+        {
+            ["tabindex"] = "0",
+            ["role"] = "grid",
+        };
+        if (sheet.Label is { Length: > 0 } label) attributes["aria-label"] = label;
+
+        var element = new RealizedElement("div")
+        {
+            Style = new HtmlStyle
+            {
+                PointerEvents = "auto",
+                Outline = "none",
+                UserSelect = "none",
+            },
+            RawAttributes = attributes,
+        };
+        // The inherited axis travels THROUGH, as it does in the client twin: a Spacer inside a
+        // sheet inside a Row needs to know which way the row runs, and `null` makes it lower to
+        // nothing on the server while the browser renders it. Found in review.
+        if (LowerNode(sheet.Child, context, horizontalAxis) is { } child) element.Children.Add(child);
+        return element;
     }
 
     private static HtmlElement LowerImage(Primitives.Image image)
