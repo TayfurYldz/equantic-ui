@@ -17,8 +17,12 @@ A DIFFERENT row is not a smaller version of Flutter's answer. Several of them ex
 has a constraint Flutter does not: **a component is written once and realized on a DOM and on a GPU
 display list**, so anything that needs one target's machinery cannot enter the vocabulary at all.
 
+Its companion is [ARCHITECTURE-AUDIT.md](ARCHITECTURE-AUDIT.md), which asks the other half of the
+same question: this file asks *how does Flutter solve this?*, that one asks *where is our own
+structure weak?*. Both are measured rather than recalled, and both are pinned.
+
 Measured against the tree at the time of writing; every claim below was grepped, not recalled — and
-kept true by `FlutterParityPinTests`, which reads this file and probes all 58 rows. A SAME,
+kept true by `FlutterParityPinTests`, which reads this file and probes all 64 rows. A SAME,
 DIFFERENT or PARTIAL row must be findable in the public surface; a GAP row must still be missing;
 and a row added without a probe fails the build. So the audit cannot rot, cannot gain unchecked
 prose, and cannot go on claiming an absence that has ended.
@@ -41,6 +45,7 @@ prose, and cannot go on claiming an absence that has ended.
 | `RenderObject` with `parent` | `LayoutNode` with `Parent` | **SAME.** Flutter makes this tree bidirectional and its configuration tree not; so do we, for the same reason. |
 | `parentData` | — | **DIFFERENT, and needs nothing.** It exists to carry what a parent assigned — an offset, a flex factor — and this engine resolves all of that into `Bounds` in the same pass. A second slot would hold a copy. |
 | `RenderSliver`, viewport virtualization | `ListView` (builds only the visible window plus overscan) | **PARTIAL.** The capability is there; the protocol is not. v1 fence, stated in the code: vertical only, fixed `ItemExtent`. There is no general sliver contract other nodes can implement. |
+| `SingleChildRenderObjectWidget`, `MultiChildRenderObjectWidget`, `LeafRenderObjectWidget` — the SHAPES a node can take, named once | `FlexNode` is the only shape the vocabulary names. 21 of 39 nodes wrap exactly one child, each through a `Child` property of its own; 4 hold many; 11 are leaves | **GAP.** The single-child shape is written 21 times and never once, so "a layout-transparent wrapper" is a list kept by the realizers (8 of 8 in the web, 6 of 8 in the layout engine) rather than a type the compiler knows. |
 
 ---
 
@@ -50,12 +55,14 @@ prose, and cannot go on claiming an absence that has ended.
 |---|---|---|
 | "Constraints go down, sizes go up, parents set positions" | The same discipline, single pass | **SAME** in behaviour. |
 | `BoxConstraints` as a VALUE (`tight`, `loose`, `bounded`, `unbounded`) | `LayoutConstraints` / `AxisConstraint` — a value with the behaviour on it (`ForChild`, `Released`, `Inline`, `Stretched`) | **DIFFERENT, and no longer weaker.** This row said the constraint "is not a type a caller can hold"; it is one now, and `LayoutContext` carries no layout state at all. It stays DIFFERENT because the shape is not Flutter's: `BoxConstraints` needs no flags, since unbounded IS an infinite max and stretched IS min-equals-max. That was tried first and it loses `StretchKind`, whose two kinds differ only in whether the stretch survives an INLINE boundary — a `Pressable`, an `Adjustable`, a `Link`. Flutter has no inline boundary to survive; we do, because one of two targets answers to CSS's inline/block model for the same component. What an AUTHOR still cannot do is receive one, which is the next row. |
+| `Rect`, `Offset`, `Size` in `dart:ui` — geometry UNDER everything | `Rect`, `Point`, `Size` in `Native.Engine` — geometry ABOVE the vocabulary | **PARTIAL, and the wrong way up.** The types exist and are good; they live where only Photon can reach them. Measured consequences: `ICanvasPainter` spells every box as four floats, `SemanticNode` cannot move down to Primitives because it carries a `Rect`, and the constraint value the row above describes (`LayoutConstraints`, #119) had to be born in `Native.Framework`, above the vocabulary, where no `LayoutBuilder` can hand it to an author. |
 | `LayoutBuilder` | `AdaptiveNode` (three window size classes) | **GAP.** We have the window-class special case of it, not the general node. The first external consumer of this SDK needed a child built against its own box, found no way to ask, and used a `Canvas` whose paint callback does nothing as a ruler — `ICanvasPainter` exposes `Width`/`Height`, so a handler-less canvas is a measuring tape. It works and re-measures across a resize. It is also an idiom nobody would guess, costing a node per use and a no-op draw callback per frame. |
 | `CustomMultiChildLayout`, `MultiChildLayoutDelegate` | — | **GAP** |
 | `CustomSingleChildLayout` | — | **GAP** |
 | Subclassing `RenderBox` | — | **DIFFERENT by design.** The layout engine is closed; the vocabulary is the extension point. A consumer composes nodes rather than implementing `performLayout`, which is what keeps one component correct on both realizers. |
 | `CustomPaint` / `CustomPainter` | `Canvas` + `ICanvasPainter` | **SAME**, and the painter already carries the box it was given. |
 | `Canvas`, `Paint`, `Path`, shaders | The Photon engine's SDF shaders (Slang → Metal/SPIR-V) | **DIFFERENT.** Shaders are the ENGINE's, not an API. A consumer gets `Canvas` primitives; there is no `FragmentProgram`. Deliberate: a consumer shader would have to exist twice and match. |
+| `TextOverflow.ellipsis` on `Text`, drawn by `TextPainter` in the neutral `painting` layer | `Text.MaxLines`; the mark is drawn by CSS on the web, appended by Android's measurer, and not drawn at all by CoreText or DirectWrite | **PARTIAL, and inconsistent by target.** The measurer contract promises an ellipsis, `MeasuredLine.Ellipsized` reports every cut, and no product code reads it — three tests do, one asserting a mark the platform never draws. |
 
 ---
 
@@ -95,6 +102,7 @@ prose, and cannot go on claiming an absence that has ended.
 | `GestureDetector` | `Pressable`, `Draggable`, `DragDismiss`, `Hoverable`, `Adjustable`, `Navigable` | **DIFFERENT, and better for this SDK.** Flutter has one detector with twenty callbacks; we have a node per INTENT, which is what lets each one carry its own semantics — a `Pressable` states its own accessible name and selection, a `Draggable` its axis and limits. |
 | `RawGestureDetector`, custom recognizers | — | **GAP** |
 | `FocusNode`, `FocusScope`, `FocusManager` | `InitialFocus`, the focus route, `Navigable` | **PARTIAL** — focus order and initial focus are expressible; there is no focus object to hold or move imperatively. |
+| `TextEditingController` + `EditableText` — the WIDGET owns the editing protocol; `TextInput` only bridges the platform's keyboard | `CodeEditorController`, `SheetController` — write-once controllers, driven by the HOST: `PhotonHost.TextInput`, `KeyDown` and `SetMarkedText` carry 681 lines of caret, selection, IME, sheet and code editing, and `lowering.ts` carries the browser's copy | **PARTIAL.** The model is shared and correct; the protocol that drives it is written per host, which is the piece Flutter keeps in one widget. |
 | `Shortcuts` / `Actions` | `Shortcut` + `KeyChord` | **SAME** |
 
 ---
@@ -135,6 +143,7 @@ prose, and cannot go on claiming an absence that has ended.
 | Flutter | Here | Verdict |
 |---|---|---|
 | `Semantics` tree for screen readers | Our own semantics walk + the macOS/iOS/Android bridges | **SAME.** Worth recording how thin the ice was: six of the fourteen labelled nodes reached no bridge at all until the walk was enumerated by reflection rather than maintained by hand. |
+| `SemanticsNode`, `SemanticsConfiguration` — in `package:flutter/semantics`, beneath every target | `SemanticRole`, `SemanticNode` — declared in `Native.Components`, one target's assembly; the web decides the same things inline, 35 times in `WebRealizer` and 86 in `lowering.ts`, and cannot name the enum | **PARTIAL, and the location is the fault.** Three answers to "what is this node to a screen reader", and the one with a type is the one the other two cannot reference. |
 | `MergeSemantics`, `ExcludeSemantics` | — | **GAP** |
 | `Localizations`, `LocalizationsDelegate`, `Intl` | `.resx`, `CultureInfo`, `ICultureController`, culture routes | **DIFFERENT, and deliberately .NET's.** Localization is done the way .NET does it, not the way Flutter does it — a .NET developer already knows this API. |
 | `TextDirection.ltr/rtl` | — | **GAP** |
@@ -148,6 +157,7 @@ prose, and cannot go on claiming an absence that has ended.
 | Flutter | Here | Verdict |
 |---|---|---|
 | `WidgetsBindingObserver` (`resumed`, `paused`, `detached`, `hidden`) | — | **GAP.** The shells know these states; nothing surfaces them to a component. |
+| `WidgetsFlutterBinding` — seven bindings mixed in, one class each: gesture, scheduler, services, painting, semantics, renderer, widgets | `PhotonHost` — one class, 2,074 lines, 44 fields, 27 public methods; a shell drives up to 18 of them, with no interface between them | **DIFFERENT, and heavier.** Everything Flutter splits by concern is one object here, which is why editing a spreadsheet and routing a hover live in the same file. |
 | `View` / `PlatformDispatcher`, multiple windows | `WindowChrome` and the desktop shells | **PARTIAL** |
 | `devicePixelRatio` | Render scale, realizer-side | **PARTIAL** — used, not authorable. |
 
@@ -161,6 +171,11 @@ one decision to take, not four.
 
 **Two gaps have a consumer already blocked behind them**, which is the only evidence that counts here:
 `LayoutBuilder` (a child built against its own box) and an authorable constraint type to go with it.
+
+**Two PARTIAL rows are about WHERE a thing lives, not whether it exists** — `Rect` above the vocabulary
+instead of under it, `SemanticsNode` inside one target instead of beneath all of them. Each blocks a
+row near it, and each is a move rather than a feature. [ARCHITECTURE-AUDIT.md](ARCHITECTURE-AUDIT.md)
+carries the measurements behind them.
 
 **Three DIFFERENT rows are the ones to keep and defend**, because they are where this SDK is not a
 smaller Flutter: declarative animation with no controller to leak; typed capabilities instead of
