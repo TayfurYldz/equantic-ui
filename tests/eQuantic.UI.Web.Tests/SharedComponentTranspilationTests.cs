@@ -3,6 +3,7 @@ using eQuantic.UI.Compiler;
 using FluentAssertions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace eQuantic.UI.Web.Tests;
 
@@ -26,11 +27,22 @@ public class SharedComponentTranspilationTests
     /// </summary>
     private static string[] SharedSources() =>
         Directory.GetFiles(Path.Combine(RepoRoot(), "src", "eQuantic.UI.Components"), "*.cs")
+            // A [RuntimeProvided] type already has a deliberately separate runtime twin (for example
+            // ButtonStyles is generated from the design-system source). Emitting it again would make
+            // the shared-library barrel contain a second implementation of the same runtime name.
+            .Where(path => !DeclaresRuntimeProvidedType(path))
             // The chart library is the second shared library, runtime-provided the same way
             // (docs/CHARTS-PLAN.md): its directory IS its roster too.
-            .Concat(Directory.GetFiles(Path.Combine(RepoRoot(), "src", "eQuantic.UI.Charts"), "*.cs"))
+            .Concat(Directory.GetFiles(Path.Combine(RepoRoot(), "src", "eQuantic.UI.Charts"), "*.cs")
+                .Where(path => !DeclaresRuntimeProvidedType(path)))
             .OrderBy(path => path, StringComparer.Ordinal)
             .ToArray();
+
+    private static bool DeclaresRuntimeProvidedType(string path) =>
+        CSharpSyntaxTree.ParseText(File.ReadAllText(path)).GetRoot().DescendantNodes()
+            .OfType<TypeDeclarationSyntax>()
+            .Any(type => type.AttributeLists.SelectMany(list => list.Attributes)
+                .Any(attribute => attribute.Name.ToString() is "RuntimeProvided" or "RuntimeProvidedAttribute"));
 
     /// <summary>
     /// Pure MODEL that the components are written against and that has no platform in it — the code
