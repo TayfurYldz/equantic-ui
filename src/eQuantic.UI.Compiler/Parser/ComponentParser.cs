@@ -188,6 +188,9 @@ public class ComponentParser
             // [ServerOnly] on the class: it never crosses, so no module — the class-level twin of the
             // method rule below, for the Roslyn service or hosted warm-up that lives in the web project.
             if (IsServerOnly(classDecl)) continue;
+            // [RuntimeProvided] static helpers already exist in @equantic/runtime; emitting a per-app
+            // module here would create a second implementation of the same exported runtime name.
+            if (IsRuntimeProvided(classDecl)) continue;
             if (classDecl.Modifiers.Any(SyntaxKind.StaticKeyword))
             {
                 results.Add(new ComponentDefinition
@@ -505,6 +508,17 @@ public class ComponentParser
 
         return classDecl.AttributeLists.SelectMany(list => list.Attributes)
             .Any(attribute => attribute.IsNamed("ServerOnly"));
+    }
+
+    private bool IsRuntimeProvided(ClassDeclarationSyntax classDecl)
+    {
+        if (TryGetSemanticModel(classDecl.SyntaxTree)?.GetDeclaredSymbol(classDecl) is { } symbol
+            && symbol.GetAttributes()
+                .Any(a => a.AttributeClass?.Name is "RuntimeProvided" or "RuntimeProvidedAttribute"))
+            return true;
+
+        return classDecl.AttributeLists.SelectMany(list => list.Attributes)
+            .Any(attribute => attribute.IsNamed("RuntimeProvided"));
     }
 
     private static bool IsServerOnly(MethodDeclarationSyntax method) =>
