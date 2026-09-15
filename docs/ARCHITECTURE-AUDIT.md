@@ -35,8 +35,69 @@ string literal's escaping to a raw path; and `tests/eQuantic.UI.Heroicons.Tests`
 the root ran eight projects while CI's `find` over `tests/` ran ten — the two instruments agreed by
 accident. Both are in the solution now.
 
+**Then, for three hours on the same day, the suite ran nowhere — and nothing said so.** #139 put
+three lines of prose inside `publish-github`'s `if: |` condition; a literal block scalar has no
+comments, so the expression GitHub was asked to evaluate had a paragraph in the middle of it, did not
+parse, and a workflow whose expression does not parse fails before a single job exists. Valid YAML,
+ten jobs present, `needs` resolving, `yaml.safe_load` content — and on GitHub's side the one tell:
+the workflow's registered name reverted from `CI` to its own path, `.github/workflows/ci.yml`. Every
+push from 35fa67ed to a3f1efc2 has a run under that name with zero jobs and the conclusion "failure",
+and seven pull requests merged in that window on their authors' local runs alone: #135, #137, #138,
+#140, #141, and this document's own #142 and #144. Their claims are not wrong; they are narrower
+than they read. #145 moved the prose above the key (on `main` as d21a98d2), and the proof is the run being called `CI` again: the first one on `main` had 13 jobs and ran 11 test projects on each of the three runners.
+Two instruments failed in a row, and they are the same family as the one-OS gap, one turn further: a
+check that could not STOP anything — the ruleset requires a review and Copilot's, not a status
+check, so a pull request with zero CI jobs was `CLEAN` — and then a check that never ran. The
+structural fix is a repository setting, put to Edgar: required status checks on `main` for
+`build-packages` and the two `test` legs, so that an absent run blocks a merge instead of passing it
+by omission. The tell becomes a one-line doctor in the pull-request checklist and in the watchers
+that read a PR's state: ask GitHub what it calls the workflow.
+
+**When the suite did run on three runners, it reported one failure where there were nine**, and the
+count itself was the fourth instrument to fail: the test step was `find tests -name "*.csproj" |
+while read` under `set -e`, so the first red project ended the loop and the nine behind
+`Web.Tests` never ran. Every project reports now and the step fails at the end, in sorted order,
+because `find` returns filesystem order and otherwise WHICH project hides the others changes per
+machine — the matrix's `fail-fast: false`, one level in. A check that stops early does not say the
+suite is green; it says where it stopped. The nine were two families. Six were "generated text versus
+committed file" where the writer asked the HOST for its line break — `StringBuilder.AppendLine` is
+`Environment.NewLine`, and so, less famously, is `JsonWriterOptions.NewLine`, so an indented JSON
+fixture is CRLF on Windows and LF everywhere else; `.gitattributes` keeps the working tree LF, which
+is the half git can do, and what a writer produces git never sees. The four TypeScript generators go
+through `CodeWriter` now, which this repository built for exactly this and says so in a constant,
+and the JSON fixtures through one `FixtureJson`. The guard matters more than the fix, because the fix
+cannot be exercised where it was written: on macOS and Linux `Environment.NewLine` already IS `\n`,
+so a writer that asks the host looks correct locally and fails on somebody else's checkout. Three
+assertions hold it — no committed artifact under the runtime's `shared/` (its `.ts`, `.json` and
+`.txt`) carries a CR (A/B'd by injecting one), `CodeWriter` breaks
+lines with LF, and no source in the generators or the fixture tests names a construct that asks the
+host — and the third found two more before they could be pushed. An instrument that can only pass
+where it runs is not an instrument. The other three failures are not ours to fix by regenerating:
+`ar-EG`'s Sunday is الأحد on macOS and أحد on the Linux runner, `en-US`'s long time pattern loses its
+seconds on Windows, and `(-3).ToString("C0")` is `-$3` under one ICU and `($3)` under another — same
+.NET, different ICU, and a fixture whose SUBJECT is the culture tables disagrees with two hosts
+whichever one writes it. What landed is the fourth answer to the calendar question, not one of the
+three that were put to Edgar: the fixtures assert the SDK's MAPPING against the host's own formatter
+on whichever runner runs them — `CalendarNamesFixtureTests` reads `DateTimeFormatInfo` and checks
+that the short names are `AbbreviatedDayNames` and never `ShortestDayNames`, twelve months and not
+thirteen, the culture's first day of the week — and the committed data is a sample the twin reads,
+regenerated only on purpose; the two format fixtures derive their expectation from the same
+formatter or leave the host-dependent value out. Deterministic on three runners, with no ICU
+pinned — which is as well, because `Microsoft.ICU.ICU4C.Runtime` ships no `osx` package at all (the
+`osx-x64` and `osx-arm64` ids are 404 on nuget.org), so "app-local ICU in the tests" could never
+have agreed on the macOS leg. One leftover: `CultureDataFactAttribute` exists in the test project
+and is applied nowhere; preview's rule says delete it, and #147 narrows to whatever still differs.
+
 The counts that carry no pin — lines, fields, how many times a word appears — are dated by the line
 above and will drift. They are here to SIZE a decision, not to be believed a year on.
+
+**A move makes every document that CITED the old location wrong, and the citation is what makes it
+findable.** Twice in two PRs a third document had gone stale behind a type that moved down: this one's
+own step 3 after #135, and `HANDOFF-FIDELITY-AUDIT.md` after #141, which still said `SemanticRole`
+"exists only on the native side" (corrected in place, because the finding it supported — that what a
+`Box` lacks is a NODE an author can attach, not a type — was unchanged). The sweep that catches it is
+`grep` for the old PATH or assembly name across `docs/`, not for the type: a type's name survives its
+move, its address does not.
 
 ---
 
@@ -471,6 +532,33 @@ stays as the analogue of `didExceedMaxLines`, read by no realizer. Same family a
 — the property one realizer honours and another drops in silence — found by the IDE consumer's session,
 measured here, and half of it found again by the same consumer reading a header.
 
+**And one newline that depends on the host — found by running the suite on Windows (#145).**
+`StringBuilder.AppendLine()` and `ReplaceLineEndings()` with no argument use `Environment.NewLine`:
+`\r\n` on Windows, `\n` everywhere else. Their eqc translations say `\n`, and both sides wrote the
+decision down — "the eqc world's NewLine" in the strategy, "Unix `Environment.NewLine`, matching the
+server/runtime" in the `StringBuilder` twin — which was true until a Windows runner ran the suite. The
+two tests fold `\r\n` to `\n` on both sides and assert the difference is ONLY that, the RootN shape.
+The product exposure is narrower than "SSR from a Windows host mismatches at hydration", and it was
+measured rather than assumed: a real Chrome parsing `a\r\nb` in a text node, a `<pre>`, a `<textarea>`
+and an attribute yields `a\nb` in all four — the HTML tokenizer folds CR LF before the DOM exists — and
+only a JSON payload keeps the `\r`. So a Windows-hosted server's markup hydrates clean; what differs
+is DATA: a string built with either call on the server and carried to the client in the prefetch or
+state payload holds `\r\n` where the same code in the browser produces `\n`. *How does the product
+principle answer it?* Not with a compiler fence on the two no-argument forms: that teaches an author
+a host's line ending, which is exactly the platform artifact the SDK exists to absorb. The SDK owns
+it — the payload writer (and, for symmetry, the web realizer's text) normalises line endings to the
+runtime's `\n`, the same way it already owns the culture catalog and the route's `null`. The third
+find of the same Windows run is the first in product code and sharpens the rule rather than
+changing it: `EmailRenderer` builds the plain-text half with `AppendLine`, so an email's text carries
+`\r\n` from a Windows host and `\n` elsewhere. RFC 5322 wants CRLF on the wire — but the SDK never
+writes the wire: `eQuantic.UI.Email` depends on `Primitives` alone, `Render` returns
+`EmailMessage(Html, PlainText)`, two strings, and its own doc says sending is the app's job (MailKit,
+SES, whatever it already uses), which is where a MIME writer canonicalises line endings. So the
+constant the SDK owes is not the format's, it is its own: every string the SDK builds ends its lines
+with `\n` on every host, and the transport owns the transport's format. One decision covers the
+payload, the email and the two tests. Sized S, decision Edgar's; nothing in `.54` changes because
+of it.
+
 ### What a misplaced type had already copied
 
 Geometry sat in `Native.Engine` (section 4), so `Primitives` could not name it, so `Primitives` grew
@@ -649,7 +737,9 @@ makes the rest safe.
    (section 7). ~~`Charts` drops `BarRect`'s own geometry~~ and ~~`ICanvasPainter` takes a `Rect`~~
    are done, twin included — the draw callback transpiles, so the two had to move together, and the
    hit test came with them: it reads the box through its own edges and builds none, because a `Rect`
-   is a struct here and a class there. Remaining: the group role, which is Edgar's decision. — M
+   is a struct here and a class there. The sweep that rewrote the call sites also rewrote three of the engine's own calls in the
+   golden scenes, which already took a `Point`; only reading the diff caught the double wrap.
+   Remaining: the group role, which is Edgar's decision. — M, done but for that
 4. **Node shapes**: a `SingleChildNode` base (Flutter: `SingleChildRenderObjectWidget`), the wrapper
    set and the node-intrinsic questions hoisted onto the vocabulary, `VisualNode.cs` split along the
    four shapes. — M
@@ -682,3 +772,37 @@ makes the rest safe.
 The compiler's internals beyond file sizes — the assembly already holding the bar; the shells' own
 platform code beyond what they drive on the host; the design host's `DesignSession`; the Server's
 endpoint surface; and the TypeScript runtime's `core/` and `dom/` beyond the twins named above.
+
+One compiler finding did arrive before that audit, from the outside, and it is recorded here because
+of what justified the code it found (#146). eqc rounds a `float` at a STORE and not at the RETURN
+seam, so a float-returning method whose body computes hands its twin an unrounded double:
+`BarChartLayout.Offset`, `(float)((value - ticks.Min) / ticks.Span) * across`, keeps the cast's
+`Math.fround` and loses the multiply's and the return's, and a chart at 317×199 puts its first bar's
+edge at 169.8333282470703 on the server and 169.83334350585938 in the browser — one ULP, predicted
+from the two arithmetics before it was believed. `FloatStore`'s own doc argues from ECMA-335 I.12.1.3:
+the CLR MAY carry a float intermediate at higher precision and guarantees the rounding only at a
+store. True as a reading of the norm, and no prediction at all: RyuJIT emits `mulss` and rounds every
+operation on every platform this SDK ships. What a specification permits and what the subject does
+are two numbers, and a cross-pin promises the second — a translation rule justified by a permission
+owes a measurement against the real runtime. The pin that will hold it is parked with the fix, and
+the fix is two: an arrow body reaches the emitter as a string while `ReturnStatementStrategy` has the
+node, so the repro is written in both shapes first, the lesson of #98.
+
+A second one arrived the same way, from the first external contributor's issue rather than from a
+pin. #127 asks for `ButtonStyles` to move from `Primitives` to `Components`, and the issue measured
+its C# callers and nothing else. The shared transpilation (`SharedComponentTranspilationTests`) feeds
+every top-level `Components/*.cs` to eqc, and `ComponentParser`'s static-helper discovery emits a
+module for EVERY top-level `static class` it meets there, skipping only resource Designer classes and
+`[ServerOnly]` — it never consults `[RuntimeProvided]`, the attribute that already means "the
+runtime provides this twin". `ButtonStyles` escapes today by its FOLDER alone: the shared
+transpilation's set is an unfiltered glob of `Components/*.cs` and `Charts/*.cs` plus exactly three
+`Primitives` subfolders (`Code`, `Sheet`, `Forms`), and `Primitives/Styles` is in none of them — the
+first measurement of this paragraph said "namespace routing", and the executor's reading of the test
+corrected it. In `Components` the file is swept up with nothing to stop it, and would gain a second
+TypeScript twin beside the `export const ButtonStyles` that `design-system.generated.ts` already
+generates and `runtime-exports.ts` already re-exports. The fix has two halves, and one without the
+other prevents nothing: the compiler skips a `[RuntimeProvided]` static helper where it skips
+`[ServerOnly]` (brief H, with the fact that proves it), AND the moved class carries the attribute,
+which travels with the file and so belongs in the contributor's PR. The lesson is this document's: an
+item of the order of attack that moves a type across the transpiler's boundary is measured against
+the TRANSPILED set too, not against its C# callers alone.

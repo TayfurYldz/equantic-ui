@@ -233,7 +233,55 @@ already writes `enums.generated.ts` and `design-system.generated.ts` from the as
   receiver it failed — the same measurement, two receivers, opposite answers, and only the concrete one
   in the condition the fence exists for. So each slice's net includes one A/B written where the defect
   would live: a node with no `Visit` in the realizer's own assembly, not in a test's; a call through the
-  concrete node, not the abstract.
+  concrete node, not the abstract. And the same rule from the other end (#145): a fix for a
+  host-dependent line break cannot be exercised on the host where `Environment.NewLine` is already
+  `\n`, so its guard asserts the property directly — no CR in the runtime's committed `shared/`
+  artifacts (`.ts`, `.json`, `.txt`), the writer breaks
+  lines with LF, no source names a construct that asks the host — rather than the fix's effect. An
+  instrument that can only pass where it runs is not an instrument.
+- **An assertion names every row it claims.** #141's import check was `NotContain("Matrix2D")` as a
+  literal, so the rows added for `Nothing` and `SemanticNode` proved the diagnostic — the loud half —
+  and said nothing about the import they were added for, the quiet half. It is a theory parameter
+  now, and the A/B says why that matters: removing `[ServerOnly]` from `SemanticNode` fails exactly
+  one case; before, zero. The same shape sat in the location probe, which named two of the three types
+  that moved and would have left `SemanticCheck` behind with the row green. A pin over a SET of things
+  is parameterised over the set; one literal standing for the set is the exemption list this plan
+  exists to retire, written in a different syntax.
+- **When a pin cannot be A/B'd cleanly, say which weaker thing was checked.** The location probe
+  could not be made to fail without moving a type to another assembly, so #141 pointed it at the OLD
+  assembly, watched the row fail, and wrote that down: it proves the probe reads real assemblies
+  rather than a tautology, which is less than "it discriminates" and more than nothing. A net that
+  states its own ceiling can be raised later; one that claims the full proof it did not do cannot.
+- **Re-measure after the LAST edit, not after the last edit you remember.** #143's body said the
+  TypeScript suite was green; it had been, on a tree that no longer existed — the suite ran, THEN the
+  transpiled twins were regenerated, and the cross-pin spec still reading `b.x/y/width/height` was
+  failing two cases when review looked. This repository already runs a packaging step twice because
+  the second run reads the first one's output; a regenerated fixture is the same thing. So a slice's
+  proof is the run whose inputs are the commit being reviewed, and a PR body names that run's head.
+- **A twin of a `float` rounds where its subject rounds.** #143's transpiled hit test was
+  `Math.fround(b.x + b.width + slack)`, because eqc emits `fround` for arithmetic on `float`; reaching
+  for the geometry twin's `Rect.inflate().right` dropped it in silence, because the twin did DOUBLE
+  arithmetic where its subject has floats, and a pointer exactly on a fractional edge could land on
+  different sides on the two targets. The twin rounds at storage and at every step now, cross-pinned
+  on fractional values. Two rules for every value-type twin S7 generates or the fixtures pin: the
+  discriminating case is FRACTIONAL — `Rect(0.1, 0.2, 0.3, 0.4).Inflate(0.05).Right` is `0.45000002`
+  in floats and `0.45` in doubles, and no whole number can show it; and a fixture carries a float
+  WIDENED to double, because .NET prints a float as the shortest string that round-trips as a float
+  (`0.1f + 0.3f` prints `0.4`, the number is `0.4000000059604645`) while JavaScript prints the number,
+  so a fixture in .NET's spelling fails a correct twin. Two instruments, two encodings, decided before
+  the first file is written: a cross-pin FIXTURE carries a number, so it widens a float to double and
+  the twin's side reads the number; a public-surface BASELINE (brief G) carries a signature, so it
+  records a constant or a default exactly as Roslyn displays it and the test compares the text —
+  there, `0.4f` is a spelling to hold, not a value to compute, and regeneration can never turn it into
+  an argument.
+- **A pin that formats in order to agree, agrees; pin the bound, not a point beside it.** The
+  layout cross-pin printed both sides to three decimals so they would share one text — exactly one
+  rounding coarser than the bit in question, which is how a one-ULP divergence (#146, a `float`
+  unrounded at the RETURN seam) lived under a green pin. And the first probe written for it could not
+  fail at all: it derived its coordinate from the same edge the comparison used, so the two moved
+  together and a twin entirely in doubles still answered zero. A cross-pin compares the numbers the
+  subject produces, at the subject's own precision, and it pins the BOUND itself — the edge, the
+  width, the returned value — never a quantity computed from that bound on both sides.
 - **Output is byte-identical, by slice.** Each realizer already has the pin that says so: the web has
   `ComponentParityFixtureTests`, `PrimitiveValueFixtureTests` and `MarkerParityTests` (and
   `SurfaceSsrTests` once #121 lands — it is that PR's, not `main`'s yet);
