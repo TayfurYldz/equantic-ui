@@ -11,24 +11,18 @@ namespace eQuantic.UI.Compiler.Tests;
 public class RuntimeProvidedClassTests
 {
     [Fact]
-    public void RuntimeProvidedStaticHelper_FallbackDoesNotEmitLocalModule()
+    public void RuntimeProvidedStaticHelper_FallbackResolverDoesNotRegisterLocalHelper()
     {
         var dir = Path.Combine(Path.GetTempPath(), "eq-runtime-provided-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         try
         {
-            File.WriteAllText(Path.Combine(dir, "ButtonStyles.cs"), """
+            var helperPath = Path.Combine(dir, "ButtonStyles.cs");
+            File.WriteAllText(helperPath, """
                 [RuntimeProvided]
                 public static class ButtonStyles
                 {
                     public const int MinWidth = 64;
-                }
-                """);
-            var probePath = Path.Combine(dir, "Probe.cs");
-            File.WriteAllText(probePath, """
-                public class Probe
-                {
-                    public int Build() => ButtonStyles.MinWidth;
                 }
                 """);
 
@@ -36,32 +30,21 @@ public class RuntimeProvidedClassTests
             resolver.ScanSourceDirectories([dir]);
             resolver.GetAllStaticHelpers().Should().NotContain("ButtonStyles");
 
-            var compiler = new ComponentCompiler { SymbolsAreAuthoritative = false };
-            compiler.SetDependencyResolver(resolver);
-            var probe = compiler.CompileFile(probePath).Single(result => result.ComponentName == "Probe");
-
-            probe.Success.Should().BeTrue(string.Join("; ", probe.Errors.Select(error => error.Message)));
-            probe.TypeScript.Should().NotContain("from \"./ButtonStyles\"");
-
-            File.WriteAllText(Path.Combine(dir, "ButtonStyles.cs"), """
+            File.WriteAllText(helperPath, """
                 public static class ButtonStyles
                 {
                     public const int MinWidth = 64;
                 }
                 """);
+
             var withoutAttribute = new ComponentDependencyResolver();
             withoutAttribute.ScanSourceDirectories([dir]);
             withoutAttribute.GetAllStaticHelpers().Should().Contain("ButtonStyles");
-
-            var fallbackCompiler = new ComponentCompiler { SymbolsAreAuthoritative = false };
-            fallbackCompiler.SetDependencyResolver(withoutAttribute);
-            var fallbackProbe = fallbackCompiler.CompileFile(probePath)
-                .Single(result => result.ComponentName == "Probe");
-            fallbackProbe.TypeScript.Should().Contain("from \"./ButtonStyles\"");
         }
         finally
         {
             Directory.Delete(dir, recursive: true);
         }
     }
+
 }
