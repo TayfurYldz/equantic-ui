@@ -1,3 +1,5 @@
+using eQuantic.UI.Primitives;
+
 namespace eQuantic.UI.Charts;
 
 /// <summary>One drawn bar or stacked segment, in the plot's own coordinates (dp, origin top-left).</summary>
@@ -6,12 +8,9 @@ namespace eQuantic.UI.Charts;
 /// <param name="Negative">Whether it grows away from the baseline toward the axis's low end.</param>
 /// <param name="DataEnd">Whether it carries the rounded DATA END — every grouped bar does, and only
 /// the outermost segment of a stack; the segments under it end square, separated by the gap.</param>
-/// <param name="X">Its left edge, dp from the plot's left.</param>
-/// <param name="Y">Its top edge, dp from the plot's top.</param>
-/// <param name="Width">How wide it is drawn, dp.</param>
-/// <param name="Height">How tall it is drawn, dp.</param>
-public sealed record BarRect(int Category, int Series, float X, float Y, float Width, float Height,
-    bool Negative, bool DataEnd);
+/// <param name="Box">Where it is drawn: the four numbers that were four parameters, as the one
+/// value they always were.</param>
+public sealed record BarRect(int Category, int Series, Rect Box, bool Negative, bool DataEnd);
 
 /// <summary>Everything the marks of a bar chart are drawn from, solved once per size.</summary>
 /// <param name="Baseline">Where zero (or the axis floor) sits: a Y for vertical bars, an X for
@@ -203,9 +202,22 @@ public static class BarChartLayout
         var bars = geometry.Bars;
         for (var i = 0; i < bars.Count; i++)
         {
-            var b = bars[i];
-            if (x >= b.X - HitSlack && x <= b.X + b.Width + HitSlack
-                && y >= b.Y - HitSlack && y <= b.Y + b.Height + HitSlack)
+            // INCLUSIVE on all four edges, which is why this is not `Rect.Contains`. That one is
+            // half-open (`< Right`, `< Bottom`) and right for what it is for: two adjacent boxes
+            // must not both claim the same pixel. A hit area with SLACK on it is the opposite kind
+            // of question — it exists to forgive a pointer, so the edge it was inflated to is part
+            // of the target. Written out rather than reaching for the neighbouring word. Found in
+            // review of the refactor that had reached for it.
+            //
+            // And the slack goes on the COMPARISON rather than into an inflated box, because this
+            // loop runs on every pointer move. Here a `Rect` is a struct and `Inflate` costs
+            // nothing; in the twin it is a class, so the same line allocates one object per bar per
+            // move. The box still reads through its own edges — what a hot loop must not do is
+            // BUILD a vocabulary value per iteration, where the subject pays stack and the twin
+            // pays heap.
+            var box = bars[i].Box;
+            if (x >= box.Left - HitSlack && x <= box.Right + HitSlack &&
+                y >= box.Top - HitSlack && y <= box.Bottom + HitSlack)
                 return i;
         }
 
@@ -224,7 +236,7 @@ public static class BarChartLayout
     {
         var length = high - low;
         return vertical
-            ? new BarRect(category, series, position, across - high, thickness, length, negative, dataEnd)
-            : new BarRect(category, series, low, position, length, thickness, negative, dataEnd);
+            ? new BarRect(category, series, new Rect(position, across - high, thickness, length), negative, dataEnd)
+            : new BarRect(category, series, new Rect(low, position, length, thickness), negative, dataEnd);
     }
 }
