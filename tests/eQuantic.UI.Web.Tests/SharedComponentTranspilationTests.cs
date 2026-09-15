@@ -203,6 +203,27 @@ public class SharedComponentTranspilationTests
     private static readonly string[] Fixtures = ["SharedCounter", "NestedChild", "NestedHost"];
 
     [Fact]
+    public void RuntimeProvidedStaticHelper_IsNotEmittedAsSharedModule()
+    {
+        var modules = TranspileSharedComponents();
+        modules.Should().NotContainKey("ButtonStyles",
+            "[RuntimeProvided] static helpers are supplied by @equantic/runtime, not emitted per app");
+
+        var buttonStylesPath = Path.Combine(RepoRoot(), "src", "eQuantic.UI.Components", "ButtonStyles.cs");
+        var source = File.ReadAllText(buttonStylesPath);
+        source.Should().Contain("[RuntimeProvided]");
+
+        var withoutAttribute = source.Replace("[RuntimeProvided]", "", StringComparison.Ordinal);
+        var emitted = new ComponentCompiler { SymbolsAreAuthoritative = false }
+            .CompileSource(withoutAttribute, buttonStylesPath)
+            .ToList();
+
+        emitted.Should().ContainSingle(result => result.ComponentName == "ButtonStyles");
+        emitted.Single().Success.Should().BeTrue(
+            string.Join("; ", emitted.Single().Errors.Select(error => error.Message)));
+    }
+
+    [Fact]
     public void SharedComponents_TranspiledFixtures_MatchCommittedModules()
     {
         var modules = TranspileSharedComponents();

@@ -1,4 +1,6 @@
-namespace eQuantic.UI.Primitives;
+using eQuantic.UI.Primitives;
+
+namespace eQuantic.UI.Components;
 
 /// <summary>
 /// The Button's METRICS (spec A12): the size table every realizer measures against.
@@ -10,6 +12,7 @@ namespace eQuantic.UI.Primitives;
 /// having none — a suite that stays green while the thing it claims to guard drifts.
 /// </para>
 /// </summary>
+[RuntimeProvided]
 public static class ButtonStyles
 {
     /// <summary>Buttons hug their label but never shrink below this (spec A12).</summary>

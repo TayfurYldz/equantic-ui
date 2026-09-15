@@ -1,3 +1,4 @@
+using eQuantic.UI.Compiler.CodeGen.Extensions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -80,6 +81,13 @@ public class ComponentDependencyResolver
             foreach (var classDecl in classes)
             {
                 var className = classDecl.Identifier.Text;
+
+                // [RuntimeProvided] types already exist in @equantic/runtime. The resolver is the
+                // no-project-semantic-model fallback used to decide whether a referenced name is a
+                // per-app module, so registering one here would manufacture a dangling ./Type import.
+                if (classDecl.AttributeLists.SelectMany(list => list.Attributes)
+                    .Any(attribute => attribute.IsNamed("RuntimeProvided")))
+                    continue;
 
                 // Static utility classes are emitted as their own module — register so referencers
                 // import. NESTED static classes embed in their owner's module (private scope, every
