@@ -83,25 +83,25 @@ public class PrimitiveValueFixtureTests
 
         var json = FixtureJson.Write(pinned);
         var path = FixturePath();
-        var current = File.Exists(path) ? File.ReadAllText(path) : null;
-        if (current == json) return;
 
-        // REGENERATE ONLY WHEN ASKED. This used to rewrite the file and pass, reasoning that the
-        // values are DERIVED from C# so a stale copy is the only way it can be wrong. True, and it
-        // misses what the fixture is FOR: it is the QUESTION vitest asks. Rewriting it silently
-        // means the new question is never asked until somebody notices a dirty working tree and
-        // commits it, and nothing makes them — the sibling pin beside this one (the exported type
-        // list) cost two types their runtime export exactly that way in 0.2.0-preview.47.
+        // Behind the env var, like every other fixture here — and unlike what this test used to
+        // do, which was to REWRITE the file on any ordinary run and pass. The values are derived
+        // from C#, so regenerating them is cheap and that made it look harmless; it is not. Vitest
+        // reads this same file in another process, so a changed primitive updated the QUESTION
+        // before the twin was ever asked the old one, and the diff nobody had to look at is the
+        // one that would have said so. `PrimitivesRuntimeExportTests` beside it already asked for
+        // the variable.
         if (Environment.GetEnvironmentVariable("EQ_UPDATE_PRIMITIVE_VALUES") == "1")
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.WriteAllText(path, json);
             return;
         }
 
-        current.Should().NotBeNull(
-            "the twin asserts against this fixture — write it once with EQ_UPDATE_PRIMITIVE_VALUES=1");
-        current.Should().Be(json,
-            "the pinned values changed; regenerate with EQ_UPDATE_PRIMITIVE_VALUES=1 and review the diff");
+        File.Exists(path).Should().BeTrue(
+            "the twin asserts against this fixture — write it with EQ_UPDATE_PRIMITIVE_VALUES=1 "
+            + "and commit it");
+        File.ReadAllText(path).Should().Be(json,
+            "a primitive's value changed — regenerate with EQ_UPDATE_PRIMITIVE_VALUES=1 and commit "
+            + "the fixture WITH the change that caused it, so the twin is asked the new question");
     }
 }
