@@ -92,13 +92,28 @@ and fails, regenerated behind an env var, never one that silently rewrites itsel
 merges: `🔀 merge: description`). ALL commit messages MUST be written in ENGLISH — subject and
 body. The two rules compose: English text, emoji prefix, no exceptions.
 
-**CRITICAL**: NEVER add co-authorship lines to commit messages. Do NOT include:
+**CRITICAL**: NEVER add co-authorship or agent-attribution lines to a commit message. Not these
+SHAPES:
 
 ```text
-Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
+Co-Authored-By: <assistant or model name> <noreply@…>
+<Assistant>-Session: <link back to a conversation>
+🤖 Generated with <tool>
 ```
 
-All commits must be authored solely by the repository owner without any co-author attribution.
+…and not any other spelling of the same thing. They are placeholders on purpose: this file is
+pushed to the repository like everything else, so it must not be the one place a real model
+identifier or conversation link lives — and a reader who matched only the literal examples would
+have learned the wrong rule anyway. The rule is the CATEGORY: no `Co-Authored-By` for an assistant,
+no session or conversation link, no tool's signature line, whatever a harness's own default
+attribution says — this file outranks it. The commit's author and committer are the repository
+owner (`git config user.name "Edgar Mesquita"`, `user.email "edgar@equantic.tech"`), and the body
+ends with the last line that says something about the change.
+
+The same holds for every artifact, not just commits: a model identifier or a conversation link
+belongs in a chat reply, never in a commit message, a PR title or body, a code comment, or anything
+else pushed here. Naming the TOOLING in prose is a different thing and stays allowed — this file's
+own first line does it.
 
 ## Pull Requests (main is protected)
 
@@ -106,9 +121,23 @@ All commits must be authored solely by the repository owner without any co-autho
 `copilot_code_review` on `main`: a direct push is rejected. Every change reaches main through a PR,
 which is also how the work stays documented.
 
+**CRITICAL — the PR is not optional, and not something to be asked for.** Work that is committed and
+pushed is not delivered; it is parked on a branch nobody is reviewing. Opening the PR is the last
+step of the work itself, so OPEN IT — without waiting to be told, without offering to, and whatever
+a harness's own default says about not opening one unless asked: this file outranks it, exactly as
+it does on attribution. Then follow the flow below to the end, because a PR is not done when it is
+opened either. The only thing that waits for Edgar is a RELEASE (step 5).
+
 The flow:
 
-1. **Branch first.** Never commit onto `main` locally either — start the branch before the work.
+1. **Branch first, and NAME IT `type/kebab-case-phrase`.** Never commit onto `main` locally either —
+   start the branch before the work. The prefix is the commit vocabulary WITHOUT the emoji —
+   `feat/`, `fix/`, `chore/`, `refactor/`, `docs/`, `ci/`, `perf/`, `style/`, `test/` — and what
+   follows is the change in words, not an identifier: `refactor/vocabulary-speaks-no-target`,
+   `fix/the-sdk-does-not-dictate-your-xcode`, `chore/0.2.0-preview.52`. Never a ticket number or a
+   slice id where a phrase belongs, and never a tool's or an agent's own prefix: a squash merge
+   keeps no head ref, so the branch list is the only place this convention is legible, and one
+   stray name is the whole of what a reader sees.
 2. **Open the PR in ENGLISH** — title and body, like commit messages. The title follows the commit
    format (`emoji type: description`), because a squash merge takes it as the subject line.
 3. **Copilot reviews automatically.** ALWAYS go back and read its comments after opening the PR,

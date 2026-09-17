@@ -15,9 +15,18 @@ namespace eQuantic.UI.Native.Engine.Tests;
 /// <para>
 /// The SDK has ONE visual vocabulary and several places that decide what each word means — how big
 /// it is, what the GPU draws, what a screen reader says, what DOM the server writes, what DOM the
-/// browser writes, what an email client is allowed to see. Each is a switch over the node type, each
-/// covers a different subset, and until this file nothing made them agree. A deliberate omission and
-/// a forgotten one looked identical to a reader and to the build.
+/// browser writes, what an email client is allowed to see. Each was a switch over the node type,
+/// each covers a different subset, and until this file nothing made them agree. A deliberate
+/// omission and a forgotten one looked identical to a reader and to the build.
+/// </para>
+///
+/// <para>
+/// THREE REMAIN. Of those six, the semantics walk and the email realizer (the second carrying the
+/// plain-text alternative that had no default arm at all) are visitors now, and the browser's
+/// lowering answers to a generated union and <c>assertNever</c> — so the question below is asked of
+/// all three by a COMPILER, and they left this list. Each departure is recorded where its entry used
+/// to be. This file retires with the last one; the plan is
+/// <c>docs/VOCABULARY-DISPATCH-PLAN.md</c>.
 /// </para>
 ///
 /// <para>
@@ -44,9 +53,8 @@ namespace eQuantic.UI.Native.Engine.Tests;
 /// So each dispatch names the ONE method that answers its question, that method's body is cut out
 /// of the file (braces matched, comments and strings removed), and the node has to appear inside it
 /// in a shape C# uses to dispatch on a type — <c>case Text t:</c>, <c>Text t =&gt;</c>, the discard
-/// <c>Spacer =&gt;</c>, or an <c>if</c> whose head is <c>node.Source is ScrollView s</c> — or, for the
-/// TypeScript twin, as <c>case 'text':</c>
-/// over the WIRE KIND the C# node declares. Never a bare name, and never an arm in some OTHER method
+/// <c>Spacer =&gt;</c>, or an <c>if</c> whose head is <c>node.Source is ScrollView s</c>.
+/// Never a bare name, and never an arm in some OTHER method
 /// of the same file: the first version of this matcher read the whole file, so a node answered in
 /// <c>MinContentWidth</c> counted as measured by <c>MeasureCore</c>, and an <c>Overlay</c> the engine
 /// does size sat in an exemption list saying it never got there. Review caught both.
@@ -54,11 +62,12 @@ namespace eQuantic.UI.Native.Engine.Tests;
 ///
 /// <para>
 /// THIS IS THE INSTRUMENT, NOT THE FIX. A regex over source is what a closed hierarchy dispatched
-/// from outside its own assembly can be held to TODAY; the structural answer is the one the language
-/// already has — a visitor whose methods are abstract, so a node added to the vocabulary is a
-/// compile error in every realizer until it is handled or explicitly declined, and a generated
-/// <c>NodeKind</c> union with an exhaustive switch on the TypeScript side. When every dispatch below
-/// is a visitor, this file retires; until then it is what keeps the seven from becoming eight.
+/// from outside its own assembly can be held to TODAY; the structural answer is the one each
+/// language already has — a visitor whose methods are abstract, so a node added to the vocabulary
+/// is a compile error in every realizer until it is handled or explicitly declined, and on the
+/// TypeScript side a generated <c>NodeKind</c> union ending in <c>assertNever</c>, since the browser
+/// has no interface to implement. Three dispatches down, three to go. Until the last one, this is
+/// what keeps the seven from becoming eight.
 /// See <c>docs/ARCHITECTURE-AUDIT.md</c>.
 /// </para>
 /// </summary>
@@ -73,15 +82,6 @@ public class VocabularyCoverageTests
 
     private static readonly string Root = RepositoryRoot();
 
-    private enum Language
-    {
-        /// <summary>Type patterns over the C# node classes.</summary>
-        CSharp,
-
-        /// <summary>String cases over the wire kind each C# node declares in <see cref="VisualNode.NodeKind"/>.</summary>
-        TypeScript,
-    }
-
     /// <summary>
     /// A dispatch: the file, the ONE method in it that answers the question, and the nodes that
     /// method is allowed not to know about. An exemption needs its reason beside it, in the same
@@ -90,7 +90,7 @@ public class VocabularyCoverageTests
     /// is for, and why every entry carries its reason where a reviewer reads it.
     /// </summary>
     private sealed record Dispatch(
-        string Name, string Path, string Method, string Question, Language Language, params string[] Exempt);
+        string Name, string Path, string Method, string Question, params string[] Exempt);
 
     private static readonly Dispatch[] Dispatches =
     [
@@ -98,7 +98,6 @@ public class VocabularyCoverageTests
             "src/eQuantic.UI.Native.Framework/Layout/LayoutEngine.cs",
             "MeasureCore",
             "how big is it, and where",
-            Language.CSharp,
             // Navigable is a web-only keyboard container today, and WebFrame is the DOM escape
             // hatch, which cannot cross at all. Overlay is NOT here: the engine does size it — to
             // zero in the page flow — and the realizer lays its child out against the viewport in
@@ -109,7 +108,6 @@ public class VocabularyCoverageTests
             "src/eQuantic.UI.Native.Components/PhotonRealizer.cs",
             "EmitNode",
             "what does the GPU draw",
-            Language.CSharp,
             // The realizer paints LAID-OUT nodes. Everything the layout pass already resolved into
             // geometry arrives as a rectangle with children, so containers and positioners have
             // nothing left to draw: Stack, Grid, Flexible, Spacer, Positioned, Pinned, SafeArea,
@@ -121,37 +119,17 @@ public class VocabularyCoverageTests
             "AdaptiveNode", "Flexible", "Grid", "InFlow", "Navigable", "Pinned", "Positioned",
             "SafeArea", "Spacer", "Stack", "WebFrame"),
 
-        new("Semantics",
-            "src/eQuantic.UI.Native.Components/Semantics.cs",
-            "Walk",
-            "what does a screen reader say",
-            Language.CSharp,
-            // Pure layout and pure behaviour announce nothing of their own: a Row is not an object
-            // to a screen reader, and a Shortcut, a Hoverable or a Simulated wraps a child without
-            // being anything itself.
-            "AdaptiveNode", "Anchored", "Box", "Column", "DragDismiss", "Draggable", "Flexible",
-            "Grid", "Hoverable", "InFlow", "InView", "Pinned", "Positioned", "Presence", "Row",
-            "SafeArea", "ScrollView", "Shortcut", "Simulated", "Spacer", "Stack", "WebFrame",
-            // DECORATIVE BY AGREEMENT, and this is where that agreement is written down. The web
-            // marks both `aria-hidden`, on the reasoning that a busy indicator is ornament and the
-            // surrounding copy is what announces the wait. Photon reaches the same answer by having
-            // no case at all — the two agree, and until this line nothing recorded that they were
-            // supposed to.
-            "LoopMotion", "Spinner",
-            // A REAL GAP WEARING AN EXEMPTION, and the only two rows here that should not be here.
-            // The web honours both (WebRealizer's LowerNavigable and LowerOverlay) and Photon is
-            // silent, because every case in the walk adds one node and returns — "one stop for the
-            // whole control" — and doing that to a navigable grid would hide every row inside it.
-            // What they need is a role that means "a labelled group, keep walking", and
-            // SemanticRole has none: it is ten leaf roles. That is a vocabulary decision with a
-            // bridge per platform behind it.
-            "Navigable", "Overlay"),
+        // `Semantics` LEFT THIS LIST, and that is the shape the rest are headed for. The semantics
+        // walk is a visitor now (`SemanticsVisitor`, one method per node, no default arm), so the
+        // question this pin asks of it — "is every node accounted for?" — is asked by the COMPILER,
+        // and the reasons that lived in an exemption array are constants named for them, returned
+        // by the arm the compiler now demands for every node. A regex over source cannot be wrong
+        // about a dispatch that no longer has a switch.
 
         new("WebRealizer",
             "src/eQuantic.UI.Web/WebRealizer.cs",
             "LowerNodeKind",
             "what DOM does the server write",
-            Language.CSharp,
             // `SheetSurface` left this list when the server learned to write it. `CodeSurface` is
             // still here, and the reason CHANGED rather than survived: it is no longer "nobody
             // noticed", it is that the client appends a caret to every code surface and the server
@@ -161,32 +139,22 @@ public class VocabularyCoverageTests
             // page rather than a guess. `SurfaceSsrTests` holds the half that is done.
             "CodeSurface"),
 
-        new("EmailRealizer",
-            "src/eQuantic.UI.Email/EmailRealizer.cs",
-            "Write",
-            "what may an email client see",
-            Language.CSharp,
-            // The MEDIUM, not an omission: an email is a printed page that happens to have links.
-            // No scrolling, no pressing, no dragging, no script, no stylesheet — Outlook renders
-            // with Word's engine. The realizer composes from Box, Row, Column, Text, Image and Link
-            // and its default arm is the ONLY loud one among the six dispatches here: it throws
-            // NotSupportedException naming the node, which is why this list can be long and still
-            // honest. A node leaving it means the medium learned something.
-            "AdaptiveNode", "Adjustable", "Anchored", "CameraPreview", "Canvas", "CodeSurface",
-            "DragDismiss", "Draggable", "Drawing", "Flexible", "Grid", "Hoverable", "Icon",
-            "InFlow", "InView", "LoopMotion", "Navigable", "Overlay", "Pinned", "Positioned",
-            "Presence", "Pressable", "SafeArea", "ScrollView", "SheetSurface", "Shortcut",
-            "Simulated", "Spacer", "Spinner", "Stack", "TextEntry", "Vector", "WebFrame"),
+        // `EmailRealizer` LEFT THIS LIST TOO, and took the longest exemption array with it. Both
+        // email walks are visitors over one shared refusal set (`EmailWalk`), so the thirty-three
+        // nodes that used to be strings here are methods the compiler demands — and the plain-text
+        // walk, which had NO default arm and skipped what it did not know in silence, now refuses
+        // exactly what the HTML refuses. `EmailRefusalParityTests` sends every one of the 33 through
+        // both alternatives and expects the same reason from each: the half a source regex could
+        // never check.
 
-        new("lowering.ts",
-            "src/eQuantic.UI.Runtime/src/shared/lowering.ts",
-            "lowerNodeKind",
-            "what DOM does the browser write",
-            Language.TypeScript
-            // The client twin of WebRealizer, keyed by wire kind rather than by type. It covers
-            // the whole vocabulary — including the two surfaces the server drops — and this line
-            // is what makes that a fact the build knows rather than a count somebody took once.
-            ),
+        // `lowering.ts` LEFT THIS LIST, and it is the departure that changes what this file IS. The
+        // browser's dispatch is keyed by wire kind, so a regex over `case 'text':` was the only
+        // instrument available — until the kind became a GENERATED union (`node-kinds.generated.ts`)
+        // and `lowerNodeKind` ended in `assertNever`. A kind with no case now fails `tsc`, which is
+        // the runtime's own build, and that is a stronger check than this file could ever be: it
+        // fails where the code is written rather than where somebody remembered to look.
+        // `EveryNode_DeclaresItsOwnWireKind` went with it, into `NodeKindTsGenerator` — the three
+        // rules it held are what the generator refuses to emit a union without.
     ];
 
     public static IEnumerable<object[]> EveryDispatch() => Dispatches.Select(d => new object[] { d.Name });
@@ -205,7 +173,7 @@ public class VocabularyCoverageTests
         vocabulary.Should().HaveCountGreaterThan(20, "the vocabulary has to be real for this to mean anything");
 
         var unaccounted = vocabulary
-            .Where(node => !Handles(body, node, dispatch.Language) && !dispatch.Exempt.Contains(node.Name))
+            .Where(node => !Handles(body, node) && !dispatch.Exempt.Contains(node.Name))
             .Select(node => node.Name)
             .ToArray();
 
@@ -229,7 +197,7 @@ public class VocabularyCoverageTests
         var byName = Vocabulary().ToDictionary(t => t.Name);
 
         var stale = dispatch.Exempt
-            .Where(name => byName.TryGetValue(name, out var node) && Handles(body, node, dispatch.Language))
+            .Where(name => byName.TryGetValue(name, out var node) && Handles(body, node))
             .ToArray();
 
         stale.Should().BeEmpty(
@@ -252,23 +220,6 @@ public class VocabularyCoverageTests
     }
 
     /// <summary>
-    /// The TypeScript door is keyed by <see cref="VisualNode.NodeKind"/>, so that key has to be a
-    /// real identity: one kind per concrete node, no two nodes sharing one. Two nodes on the same
-    /// kind would let the TypeScript pin pass for a node the browser has never heard of.
-    /// </summary>
-    [Fact]
-    public void EveryNode_DeclaresItsOwnWireKind()
-    {
-        var kinds = Vocabulary().Select(node => (node.Name, Kind: WireKind(node))).ToArray();
-
-        kinds.Should().OnlyContain(k => k.Kind.Length > 0, "a node without a wire kind cannot cross to the browser");
-        kinds.Select(k => k.Kind).Should().OnlyHaveUniqueItems(
-            "the wire kind is the node's identity on the client; two nodes on one kind lower as the same thing");
-        kinds.Should().OnlyContain(k => k.Kind != "component",
-            "\"component\" is UiComponent's kind — the expansion seam — and belongs to no concrete node");
-    }
-
-    /// <summary>
     /// The instrument, checked against itself: every dispatch's method must be FOUND, and its body
     /// must be a real switch and not an empty pair of braces — a matcher pointed at the wrong method
     /// would report every node handled or none, and either is a pass for the wrong reason.
@@ -281,7 +232,7 @@ public class VocabularyCoverageTests
         var body = BodyOf(dispatch);
 
         body.Length.Should().BeGreaterThan(200, $"{dispatch.Method} is a dispatch over the vocabulary, not a stub");
-        Vocabulary().Count(node => Handles(body, node, dispatch.Language))
+        Vocabulary().Count(node => Handles(body, node))
             .Should().BeGreaterThan(3, $"{dispatch.Method} handles nodes; a body handling none means the wrong method was cut out");
     }
 
@@ -296,9 +247,8 @@ public class VocabularyCoverageTests
     private static string BodyOf(Dispatch dispatch)
     {
         var source = File.ReadAllText(Path.Combine(Root, dispatch.Path));
-        var signature = dispatch.Language == Language.TypeScript
-            ? new Regex($@"\bfunction {Regex.Escape(dispatch.Method)}\(")
-            : new Regex($@"\b{Regex.Escape(dispatch.Method)}\((?![^)]*\)\s*;)"); // a declaration, not a call statement
+        // A declaration, not a call statement.
+        var signature = new Regex($@"\b{Regex.Escape(dispatch.Method)}\((?![^)]*\)\s*;)");
         var start = signature.Match(source);
         start.Success.Should().BeTrue($"{dispatch.Path} declares {dispatch.Method}; the dispatch moved or was renamed");
 
@@ -326,20 +276,18 @@ public class VocabularyCoverageTests
                 continue;
             }
 
-            // Strings: their braces must not unbalance the cut, and in C# their WORDS must not count
-            // — a diagnostic message saying "is Box" is prose. In TypeScript the string IS the arm
-            // (`case 'box':` dispatches on the wire kind), so there the literal is kept verbatim.
+            // Strings: their braces must not unbalance the cut, and their WORDS must not count —
+            // a diagnostic message saying "is Box" is prose, not an arm.
             if (c is '"' or '\'' or '`')
             {
                 var quote = c;
-                var from = i;
                 i++;
                 while (i < source.Length && source[i] != quote)
                 {
                     if (source[i] == '\\') i++;
                     i++;
                 }
-                blanked.Append(dispatch.Language == Language.TypeScript ? source[from..Math.Min(i + 1, source.Length)] : " ");
+                blanked.Append(' ');
                 continue;
             }
 
@@ -354,13 +302,10 @@ public class VocabularyCoverageTests
     /// <summary>
     /// A node is HANDLED when it appears in the body in a shape C# uses to dispatch on a type — or
     /// when a base of it does: an arm for <c>FlexNode</c> handles a <c>Row</c>, because that is
-    /// what the arm is for. On the TypeScript side the shape is the one string case over its kind.
+    /// what the arm is for.
     /// </summary>
-    private static bool Handles(string body, Type node, Language language) => language switch
-    {
-        Language.TypeScript => Regex.IsMatch(body, $@"\bcase '{Regex.Escape(WireKind(node))}':"),
-        _ => SelfAndBases(node).Any(name => HandlesCSharp(body, name)),
-    };
+    private static bool Handles(string body, Type node) =>
+        SelfAndBases(node).Any(name => HandlesCSharp(body, name));
 
     private static bool HandlesCSharp(string body, string node)
     {

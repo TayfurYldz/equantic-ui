@@ -5,11 +5,18 @@ namespace eQuantic.UI.Primitives;
 ///
 /// <para>
 /// Six dispatches walk these nodes — layout, three realizers, semantics, and the runtime's own
-/// lowering — and every one of them is a switch with a default arm. A node added to the vocabulary
-/// joins that arm silently in all six, which is how a spreadsheet rendered as an empty
+/// lowering — and every one of them was a switch with a default arm. A node added to the vocabulary
+/// joined that arm silently in all six, which is how a spreadsheet rendered as an empty
 /// <c>&lt;span&gt;</c> to every crawler for a month: nothing asked the web realizer whether it had
 /// heard of <c>SheetSurface</c>. The coverage pin that found it reads the switches with a regex,
 /// which is a net stretched under a hole rather than the hole closed.
+/// </para>
+///
+/// <para>
+/// Three have crossed: the semantics walk (<c>SemanticsVisitor</c>), both email alternatives over
+/// one shared refusal set (<c>EmailWalk</c>), and the runtime's lowering — that last one differently,
+/// through a generated <c>NodeKind</c> union and an <c>assertNever</c>, since the browser has no
+/// interface to implement. Three to go: the layout engine and the two remaining realizers.
 /// </para>
 ///
 /// <para>
