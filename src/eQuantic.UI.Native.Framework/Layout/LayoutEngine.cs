@@ -553,19 +553,24 @@ public static class LayoutEngine
         Spinner spinner => spinner.Size,
         CameraPreview camera => camera.Width,
         Spacer spacer => spacer.FixedLength,
+        // EIGHT WRAPPERS ANSWER ZERO HERE, and they are not eight of a kind — the split below is
+        // the distinction, because a reader who takes all eight for oversights "fixes" three
+        // deliberate contracts.
+        //
+        // FIVE ARE OMISSIONS: named by CrossSizeKind and not by this list, which was kept by hand.
+        // Nobody decided them, and they are load-bearing anyway — a wrapped Text is invisible to
+        // the truncation contract (it finds Text among a row's children BY TYPE), so the zero floor
+        // is what lets a shrinking row cut it down to where the bare text would have landed.
+        // Preserved exactly as measured; #225 is where the FOUR readers are made to agree — these
+        // two, `Shrinkable`, and that contract.
+        DragDismiss or Draggable or LoopMotion or Pinned or SafeArea => 0,
+        // THREE ARE PRINCIPLED, and were in NEITHER list: a scroller's floor is not its content's
+        // (it scrolls instead of growing), an Overlay is a viewport layer that takes no space in the
+        // page flow at all, and a Positioned is a contract with a Stack rather than a child of the
+        // row. These answer zero because zero is right, not because nobody wrote them down.
+        Overlay or Positioned or ScrollView => 0,
         // Wrappers are transparent to the floor exactly as they are to layout.
-        Pressable pressable => MinContentWidth(pressable.Child, ctx),
-        CodeSurface surface => MinContentWidth(surface.Child, ctx),
-        SheetSurface sheet => MinContentWidth(sheet.Child, ctx),
-        Link link => MinContentWidth(link.Child, ctx),
-        Adjustable adjustable => MinContentWidth(adjustable.Child, ctx),
-        Hoverable hoverable => MinContentWidth(hoverable.Child, ctx),
-        Simulated simulated => MinContentWidth(simulated.Child, ctx),
-        InView inView => MinContentWidth(inView.Child, ctx),
-        InFlow inFlow => MinContentWidth(inFlow.Child, ctx),
-        Shortcut shortcut => MinContentWidth(shortcut.Child, ctx),
-        Flexible flexible => MinContentWidth(flexible.Child, ctx),
-        Presence presence => MinContentWidth(presence.Child, ctx),
+        SingleChildNode wrapper => MinContentWidth(wrapper.Child, ctx),
         UiComponent component => component.ExpandContained(ctx.Components, ctx,
             static (built, context) => MinContentWidth(built, context)),
         _ => 0,
@@ -1848,13 +1853,7 @@ public static class LayoutEngine
     {
         Box box => (horizontal ? box.Style.Height : box.Style.Width).Kind,
         FlexNode flex => (horizontal ? flex.Height : flex.Width).Kind,
-        Pressable pressable => CrossSizeKind(pressable.Child, horizontal),
-        CodeSurface surface => CrossSizeKind(surface.Child, horizontal),
-        SheetSurface sheet => CrossSizeKind(sheet.Child, horizontal),
-        Hoverable hoverable => CrossSizeKind(hoverable.Child, horizontal),
-        Shortcut shortcut => CrossSizeKind(shortcut.Child, horizontal),
-        Adjustable adjustable => CrossSizeKind(adjustable.Child, horizontal),
-        Flexible flexible => CrossSizeKind(flexible.Child, horizontal),
+
         // Always-explicit nodes: their constructors demand a size — stretch must never override.
         Image => SizeKind.Fixed,
         Icon => SizeKind.Fixed,
@@ -1862,15 +1861,17 @@ public static class LayoutEngine
         Drawing => SizeKind.Fixed,
         Spinner => SizeKind.Fixed,
         Grid grid => (horizontal ? grid.Height : grid.Width).Kind,
-        // Layout-transparent wrappers delegate to what they wrap.
-        Pinned pinned => CrossSizeKind(pinned.Child, horizontal),
-        Draggable draggable => CrossSizeKind(draggable.Child, horizontal),
-        SafeArea safeArea => CrossSizeKind(safeArea.Child, horizontal),
-        Presence presence => CrossSizeKind(presence.Child, horizontal),
-        LoopMotion loop => CrossSizeKind(loop.Child, horizontal),
-        DragDismiss drag => CrossSizeKind(drag.Child, horizontal),
-        Link link => CrossSizeKind(link.Child, horizontal),
+        // SIX WRAPPERS ANSWER HUG, split the same way as the floor above and for the same reason.
+        // THREE ARE OMISSIONS: named by MinContentWidth and not here, the other half of the
+        // eight-place disagreement between two lists kept by hand.
+        InFlow or InView or Simulated => SizeKind.Hug,
+        // THREE ARE PRINCIPLED, the same three, in neither list and deliberate in both: a scroller,
+        // a viewport layer, and a Stack's contract do not take their cross size from a child.
+        // Preserved exactly as measured; reconciling the omissions moves pixels, which is #225.
+        Overlay or Positioned or ScrollView => SizeKind.Hug,
         Anchored anchored => CrossSizeKind(anchored.Anchor, horizontal),
+        // Layout-transparent wrappers delegate to what they wrap.
+        SingleChildNode wrapper => CrossSizeKind(wrapper.Child, horizontal),
         _ => SizeKind.Hug,
     };
 
