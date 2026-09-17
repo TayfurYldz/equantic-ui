@@ -21,13 +21,13 @@ namespace eQuantic.UI.Native.Engine.Tests;
 /// </para>
 ///
 /// <para>
-/// TWO REMAIN, and they are the only two this file still checks — the layout engine and the Photon
-/// realizer. The other four left because a COMPILER asks them the question instead: the semantics
-/// walk, both email alternatives over one shared refusal set and the web realizer are visitors, and
-/// the browser's lowering answers to a generated union ending in <c>assertNever</c>, since it has no
-/// interface to implement. Nothing below scans those four any more, which is the point — each
-/// departure is recorded where its entry used to be. This file retires with the last one; the plan
-/// is <c>docs/VOCABULARY-DISPATCH-PLAN.md</c>.
+/// ONE REMAINS, and it is the only one this file still checks — the Photon realizer. The other five
+/// left because a COMPILER asks them the question instead: the semantics walk, both email
+/// alternatives over one shared refusal set, the web realizer and the layout engine are visitors,
+/// and the browser's lowering answers to a generated union ending in <c>assertNever</c>, since it
+/// has no interface to implement. Nothing below scans those five any more, which is the point —
+/// each departure is recorded where its entry used to be. This file retires with the last one; the
+/// plan is <c>docs/VOCABULARY-DISPATCH-PLAN.md</c>.
 /// </para>
 ///
 /// <para>
@@ -67,8 +67,9 @@ namespace eQuantic.UI.Native.Engine.Tests;
 /// language already has — a visitor whose methods are abstract, so a node added to the vocabulary
 /// is a compile error in every realizer until it is handled or explicitly declined, and on the
 /// TypeScript side a generated <c>NodeKind</c> union ending in <c>assertNever</c>, since the browser
-/// has no interface to implement. Four dispatches down, two to go. Until the last one, this is
-/// what keeps the seven from becoming eight.
+/// has no interface to implement. FIVE DISPATCHES DOWN, ONE TO GO — `PhotonRealizer.EmitNode` is
+/// the only row left in the array below, and S6 takes it. Until then this is what keeps the seven
+/// from becoming eight.
 /// See <c>docs/ARCHITECTURE-AUDIT.md</c>.
 /// </para>
 /// </summary>
@@ -95,16 +96,6 @@ public class VocabularyCoverageTests
 
     private static readonly Dispatch[] Dispatches =
     [
-        new("LayoutEngine",
-            "src/eQuantic.UI.Native.Framework/Layout/LayoutEngine.cs",
-            "MeasureCore",
-            "how big is it, and where",
-            // Navigable is a web-only keyboard container today, and WebFrame is the DOM escape
-            // hatch, which cannot cross at all. Overlay is NOT here: the engine does size it — to
-            // zero in the page flow — and the realizer lays its child out against the viewport in
-            // the overlay pass; the first version of this list said it never reached the engine.
-            "Navigable", "WebFrame"),
-
         new("PhotonRealizer",
             "src/eQuantic.UI.Native.Components/PhotonRealizer.cs",
             "EmitNode",
@@ -126,6 +117,15 @@ public class VocabularyCoverageTests
         // and the reasons that lived in an exemption array are constants named for them, returned
         // by the arm the compiler now demands for every node. A regex over source cannot be wrong
         // about a dispatch that no longer has a switch.
+
+        // `LayoutEngine` LEFT THIS LIST, and its two exemptions are the reason to notice how. They
+        // were the only ones here that named nodes the dispatch had never MENTIONED: `Navigable` and
+        // `WebFrame` reached `_ => ctx.Node(node)` and measured as a zero box, so the judgement about
+        // them lived in this array and the behaviour lived in a default arm, with nothing joining
+        // the two. `MeasureVisitor` has a door for each, carrying the reason this array carried —
+        // and they are not the same kind of reason, which an array of strings could not have shown:
+        // a WebFrame cannot cross to a surface with no browser behind it, while a Navigable is a
+        // real node whose Photon layout nobody has written. Same answer, different standing.
 
         // `WebRealizer` LEFT THIS LIST, and it was the one with an exemption that had already
         // changed its reason once. `WebLoweringVisitor` answers for all forty nodes, so `CodeSurface`
