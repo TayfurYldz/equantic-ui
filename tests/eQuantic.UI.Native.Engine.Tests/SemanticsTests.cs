@@ -206,4 +206,73 @@ public class SemanticsTests
         page.Volume.Should().Be(4, "+1 then −1 then −1");
         host.AdjustPath("nowhere", 1).Should().BeFalse("a stale path answers false, never throws");
     }
+
+    private sealed class VolumePage : Primitives.StatefulComponent
+    {
+        public float Volume = 0.4f;
+        public string? Spoken;
+
+        public override VisualNode Build(ComponentContext context) =>
+            new Slider(Volume, v => SetState(() => Volume = v)) { Label = "Volume", ValueText = Spoken };
+    }
+
+    private sealed class GroupPage : Primitives.StatefulComponent
+    {
+        public AdjustableRole Role = AdjustableRole.Tablist;
+
+        public override VisualNode Build(ComponentContext context) =>
+            new Adjustable(new Box(new BoxStyle { Width = 120, Height = 24 }), _ => { })
+            {
+                Label = "Period",
+                Role = Role,
+                Value = new AdjustableValue(2, 0, 5),
+            };
+    }
+
+    /// <summary>
+    /// Spec C7: a slider announces WHAT IT HOLDS, not only what it is for. The bridges report an
+    /// Adjustable as their platform's slider, and the value slot was null — the native half of the
+    /// invalid <c>role="slider"</c> the web emitted with no <c>aria-valuenow</c>.
+    /// </summary>
+    [Fact]
+    public void ASlider_AnnouncesItsValue_AndTheWordsWhenTheCallerGivesThem()
+    {
+        var page = new VolumePage();
+        var host = new PhotonHost(page, PhotonTheme.Instance, ThemeMode.Light, 400, 400);
+        host.RenderFrame(new DisplayListBuilder());
+
+        var slider = host.Semantics().Single(s => s.Role == SemanticRole.Slider);
+        slider.Label.Should().Be("Volume", "the NAME is what the control is for");
+        slider.Value.Should().Be("0.4", "and the VALUE is what it holds");
+
+        var spoken = new VolumePage { Spoken = "40%" };
+        var withWords = new PhotonHost(spoken, PhotonTheme.Instance, ThemeMode.Light, 400, 400);
+        withWords.RenderFrame(new DisplayListBuilder());
+
+        withWords.Semantics().Single(s => s.Role == SemanticRole.Slider).Value
+            .Should().Be("40%", "words REPLACE the number, exactly as aria-valuetext does on the web");
+    }
+
+    /// <summary>
+    /// The value is the SLIDER role's here too. The bridges report all three roles as one, so nothing
+    /// on this side would notice — but the node's contract says a tablist and a radiogroup announce a
+    /// SELECTION their children state, and a contract that holds only in the DOM is not a contract.
+    /// <para>
+    /// Reachable since <c>UI.Adjustable</c> grew a value argument beside a role one: before that, no
+    /// component in the library could build the pair, and the divergence would have shipped on the
+    /// first app that did.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData(AdjustableRole.Tablist)]
+    [InlineData(AdjustableRole.Radiogroup)]
+    public void AGroupRoleAnnouncesNoValue_TheSameRuleTheWebApplies(AdjustableRole role)
+    {
+        var host = new PhotonHost(new GroupPage { Role = role }, PhotonTheme.Instance, ThemeMode.Light, 400, 400);
+        host.RenderFrame(new DisplayListBuilder());
+
+        var announced = host.Semantics().Single(s => s.Role == SemanticRole.Slider);
+        announced.Label.Should().Be("Period", "the NAME is still announced");
+        announced.Value.Should().BeNull("ARIA has no valuenow for either role, and neither realizer invents one");
+    }
 }

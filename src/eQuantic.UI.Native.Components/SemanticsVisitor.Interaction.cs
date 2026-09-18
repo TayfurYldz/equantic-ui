@@ -48,10 +48,24 @@ internal sealed partial class SemanticsVisitor
     /// <summary>
     /// One stop for the whole control, inner pressables stay pointer-only — the same rule the focus
     /// route applies (<c>InputSink.WithoutFocusStops</c>).
+    /// <para>
+    /// The VALUE rides the same slot a text field's does (spec C7): the bridges report an Adjustable
+    /// as their platform's slider, and a slider whose value is null announces its name and nothing
+    /// else — the native half of the invalid <c>role="slider"</c> the web emitted.
+    /// </para>
+    /// <para>
+    /// The value is the SLIDER role's and no other's, exactly as on the web. Nothing here needs ARIA
+    /// to say so — the bridges report all three roles as one — but the node's own contract does, and
+    /// a contract that holds on one target is not a contract. This became reachable the moment
+    /// <c>UI.Adjustable</c> grew a value argument beside a role one: the same tree would have
+    /// announced a position on Photon and none in the DOM.
+    /// </para>
     /// </summary>
     public bool Visit(Adjustable node, LayoutNode laidOut) =>
         Announce(new(SemanticRole.Slider, laidOut.Path ?? "", laidOut.Bounds,
-            node.Label, null, false));
+            node.Label,
+            node.Role == AdjustableRole.Slider ? node.Value?.Spoken : null,
+            false));
 
     /// <inheritdoc cref="AwaitsGroupRole"/>
     public bool Visit(Navigable node, LayoutNode laidOut) => AwaitsGroupRole;

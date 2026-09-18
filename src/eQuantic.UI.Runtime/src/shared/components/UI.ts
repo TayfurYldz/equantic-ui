@@ -1,4 +1,4 @@
-import { AdaptiveNode, Adjustable, AlignmentValue, Anchored, AppBar, Avatar, Badge, Banner, BottomNavigation, Box, BoxStyle, Button, Calendar, Canvas, CanvasPointer, Card, Checkbox, Chip, ColorToken, Column, CookieConsent, CrossAlignValue, CultureOption, CultureSwitcher, DateOnly, DatePicker, DateTime, DateTimePicker, Dialog, DialogAction, Divider, DragDismiss, Draggable, Drawer, Drawing, EdgeInsets, EmptyState, Flexible, Grid, GridTrack, Hoverable, Icon, IconButton, IconGlyph, IconsValue, Image, ImageFitValue, InFlow, InView, KeyChord, Link, ListDetail, ListItem, ListView, MainAlignValue, Markdown, Mermaid, NavigationRail, NavItem, Overlay, Pinned, Positioned, Presence, PresenceMotionValue, Pressable, PressableRoleValue, ProgressBar, Row, SafeArea, ScrollAxisValue, ScrollView, SearchField, SegmentedControl, Select, Shortcut, Simulated, SizeValue, SizeVariantValue, Skeleton, Slider, Spacer, Spinner, Stack, Stepper, Switch, Tabs, Text, TextAlignmentValue, TextEntry, TextInput, TimeOnly, TimePicker, Toast, Tooltip, TypeRoleValue, TypeStyle, VariantValue, Vector, VectorDrawing, VisualNode } from "../runtime-exports";
+import { AdaptiveNode, Adjustable, AdjustableRoleValue, AdjustableValue, AlignmentValue, Anchored, AppBar, Avatar, Badge, Banner, BottomNavigation, Box, BoxStyle, Button, Calendar, Canvas, CanvasPointer, Card, Checkbox, Chip, ColorToken, Column, CookieConsent, CrossAlignValue, CultureOption, CultureSwitcher, DateOnly, DatePicker, DateTime, DateTimePicker, Dialog, DialogAction, Divider, DragDismiss, Draggable, Drawer, Drawing, EdgeInsets, EmptyState, Flexible, Grid, GridTrack, Hoverable, Icon, IconButton, IconGlyph, IconsValue, Image, ImageFitValue, InFlow, InView, KeyChord, Link, ListDetail, ListItem, ListView, MainAlignValue, Markdown, Mermaid, NavigationRail, NavItem, Overlay, Pinned, Positioned, Presence, PresenceMotionValue, Pressable, PressableRoleValue, ProgressBar, Row, SafeArea, ScrollAxisValue, ScrollView, SearchField, SegmentedControl, Select, Shortcut, Simulated, SizeValue, SizeVariantValue, Skeleton, Slider, Spacer, Spinner, Stack, Stepper, Switch, Tabs, Text, TextAlignmentValue, TextEntry, TextInput, TimeOnly, TimePicker, Toast, Tooltip, TypeRoleValue, TypeStyle, VariantValue, Vector, VectorDrawing, VisualNode } from "../runtime-exports";
 
 export class UI {
     static column(gap: number = 0, main: MainAlignValue = 'start', cross: CrossAlignValue = 'stretch', wrap: boolean = false, runGap: number | null = null, padding: EdgeInsets | null = null, width?: SizeValue, height?: SizeValue, children: VisualNode[] | null = null) {
@@ -137,8 +137,8 @@ export class UI {
         return new DragDismiss(child, onDismiss);
     }
 
-    static adjustable(child: VisualNode, onAdjust: (int: number) => void) {
-        return new Adjustable(child, onAdjust);
+    static adjustable(child: VisualNode, onAdjust: (int: number) => void, value: AdjustableValue | null = null, role: AdjustableRoleValue = 'slider') {
+        return new Adjustable(child, onAdjust, { value: value, role: role });
     }
 
     static shortcut(child: VisualNode, chord: KeyChord, onPressed: () => void) {
@@ -189,8 +189,8 @@ export class UI {
         return new Switch(on, onChanged, { label: label, disabled: disabled });
     }
 
-    static slider(value: number, onChanged: ((float: number) => void) | null = null) {
-        return new Slider(value, onChanged);
+    static slider(value: number, onChanged: ((float: number) => void) | null = null, min: number = 0, max: number = 1, step: number = 0, label: string = '', valueText: string | null = null, disabled: boolean = false, variant: VariantValue = 'primary') {
+        return new Slider(value, onChanged, { min: min, max: max, step: step, label: label, valueText: valueText, disabled: disabled, variant: variant });
     }
 
     static stepper(value: number, onChanged: ((int: number) => void) | null = null) {
