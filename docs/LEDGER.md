@@ -287,6 +287,72 @@ record of a release, the wiki's Upgrading page is the distillate.
   too: the statement probe reports nothing for `row.Add(child)` with the fix reverted, so a test
   written there would have passed either way — the first one I wrote did.
 
+- **2026-09-18 · One statement of layout transparency, and the contract that made four lists
+  necessary**: three readers in the layout engine kept hand-written lists of which wrappers to look
+  through, and they differed in eight of the twenty
+  ([#225](https://github.com/eQuantic/equantic-ui/issues/225)). The issue framed the eight as
+  omissions nobody had decided and asked whether fixing them moved pixels. MEASURED, the answer was
+  sharper in both directions. ELEVEN of the twenty overflowed a fixed row outright — `Pressable`,
+  `Link`, `Hoverable`, most of the tappable text in a real screen — by 128dp where the text was one
+  unbreakable word and the bare one ellipsized. And the nine that did NOT overflow agreed only in
+  WIDTH: NINETEEN of the twenty wrapped to as many lines as they liked where the bare text was cut
+  to one, every wrapper but `Overlay`. The single guard on this could not see it, because it
+  asserted the one number on which the two agreed. Both come from
+  the FOURTH reader: the truncation contract found its subjects with `children[i] is Text`, so a
+  wrapped text was not a text, and it re-measured by HAND — which could only ever cut a bare `Text`
+  and dropped a rich paragraph's runs by rebuilding the node from `PlainContent`. The cut is a
+  re-measure of the ITEM now, through the same pass everything else takes, carrying the line cap on
+  the constraints; `LayoutTransparency` states once which wrappers carry geometry of their own, and
+  the default is transparent so a twenty-first wrapper is covered on the day it is declared. THREE
+  READERS, NOT FOUR, and that is measured rather than tidy: `Shrinkable` looked like the fourth, but
+  across 168 rows an arm there changed exactly one family of cases and changed it for the worse — a
+  `Flexible`'s exclusion is a contract with the DIRECT parent, so inheriting it through a wrapper
+  inherits a promise nobody made, and the wrapped Flexible then kept 100/150/220 where the bare one
+  yields 0/22/92. TWO OF THE NEW TESTS WERE TAUTOLOGIES on the first draft and mutation-checking
+  caught both: a fixed Box measured at a narrower bound comes back at its fixed width either way, so
+  the probe had to become the shape the shared-buttons golden builds — which is the golden that
+  caught it. REVIEW FOUND ONE MORE, and it was real: the ellipsis took its face from the style in
+  hand at the wrap decision — the word that FAILED to fit, which is the first word of the next run
+  as often as not — and carried neither the ink nor the link of the run it was ending, so a
+  truncated link's mark was not pressable where a target hit-tests per fragment. The remedy needed
+  one step more than the review said: the last fragment on a cut line is frequently the SPACE that
+  follows the last word, and that space already belongs to the next run, so the mark takes the last
+  VISIBLE fragment's. A SECOND ROUND found the edge the first left: with one word on the cut line
+  and nothing to drop, the mark's width was added to a line already at the limit, so the node
+  reported more room than its parent gave it — 75.48 into a box of 40 — where the plain path has
+  always ended a cut line with `Min(lineWidth + ellipsis, maxWidth)`. The two paths are pinned
+  against EACH OTHER now rather than against a number. The review's stated mechanism was wrong (the
+  measured width grows WITH the mark, so the fragment is inside it) and its consequence was right
+  anyway, which is the case for reading a finding past its first sentence. It also caught a stale
+  count my own mutation harness had reverted: a restore from a backup taken before the fix put
+  "nine of the twenty" back, and I did not re-read the file after the last restore. A THIRD ROUND
+  said the runs path read `maxW <= 0` as unbounded, and measuring it found the finding was narrower
+  than the fault: the runs path clamped NO line to its limit, where the plain measurer has always
+  committed each one at `Min(candidate, maxWidth)` — 170dp reported into a box of 0, and 54.4 into a
+  box of 10, which has nothing to do with zero. Every line is clamped now, and only infinity counts
+  as unbounded. THAT TEST THEN FOUND A DEFECT IT DOES NOT FIX: every inter-word space in a rich
+  paragraph measures ZERO, because `MeasureRuns` asks the measurer for each piece and the measurer
+  splits on `' '` with `RemoveEmptyEntries`, so a lone space is an empty word list. Identical for one
+  word, exactly 5.1dp short per gap after that — a paragraph with emphasis claims less room than the
+  same sentence without. It is a different mechanism, in the measurer rather than the clamp, and
+  moving it moves every rich paragraph's geometry; pinned rather than widened into this change. A
+  FOURTH ROUND then found the half of the clamp that clamping alone could not reach: with the room
+  too narrow for even one word, the reported width was right and the MARK was placed past it —
+  present in the fragments and invisible behind the realizer's clip, on a line the measurement
+  already called ellipsized. Dropping stops at one word, so the word is what gives now: its tail is
+  cut to leave exactly the mark's width, asked of the measurer one prefix at a time because an
+  advance is the measurer's business. `alphabet` in a box of 40 lays out as `alp…` at 31.28. That
+  cost the exact-parity assertion of the round before, and dropping it was a decision rather than a
+  concession: the rich path reports the content it laid out where the plain measurer reports the
+  clamp, and reporting LESS than the room offered is what every hugging node does. A FIFTH ROUND
+  took the prefix search from a walk to a binary one — a long unbreakable word cost one measurement
+  per character, and against a real shaper those are not arithmetic — and caught a doc of mine
+  contradicting my own code two paragraphs above it, which is the defect this whole PR keeps
+  finding. The search's correctness does not rest on monotonicity, only its optimality: every
+  candidate it returns is one it measured and saw fit. FIVE ROUNDS, SEVEN FINDINGS, all real, and
+  the last two were about the fix rather than the subject — which is what happens when a change
+  reaches into a stack next to its own. The 91 goldens did not move.
+
 
 ## Retired documents
 

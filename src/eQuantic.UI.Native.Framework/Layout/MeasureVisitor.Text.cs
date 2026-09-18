@@ -8,19 +8,37 @@ namespace eQuantic.UI.Native.Framework;
 /// carries, which is what makes this seam the one place a layout depends on the platform.</summary>
 internal sealed partial class MeasureVisitor
 {
-    private LayoutNode MeasureText(Text text, float maxW, LayoutContext ctx)
+    private LayoutNode MeasureText(Text text, LayoutConstraints constraints, LayoutContext ctx)
     {
         var result = ctx.Node(text);
+        var maxW = constraints.MaxWidth;
         // The SAME resolver the realizers use. This built the merge by hand and therefore measured
         // without the theme's code face while PhotonRealizer rasterized with it — wrapping, widths
         // and a caret column computed against one face and drawn in another.
         var style = text.Resolve(ctx.Theme);
-        if (text.Spans is { Count: > 0 } spans) return MeasureRuns(result, text, spans, style, maxW, ctx);
-        var measurement = ctx.Measurer.Measure(text.PlainContent, style, ctx.TypeScale, maxW, text.MaxLines);
+        var maxLines = LineCap(text, constraints);
+        if (text.Spans is { Count: > 0 } spans)
+            return MeasureRuns(result, text, spans, style, maxW, maxLines, ctx);
+        var measurement = ctx.Measurer.Measure(text.PlainContent, style, ctx.TypeScale, maxW, maxLines);
         result.Text = measurement;
         result.Bounds = new Rect(0, 0, measurement.Width, measurement.Height);
         return result;
     }
+
+    /// <summary>
+    /// How many lines this measurement may use — the text's own <see cref="Text.MaxLines"/>, or AT
+    /// LEAST ONE when the parent is cutting it to fit (spec A2: text yields an ellipsis before a
+    /// sibling is pushed out).
+    /// <para>
+    /// The cut used to live in the flex pass, which re-measured the text itself with this same
+    /// <c>Max(1, …)</c>. Asking here is what lets the contract cut a WRAPPED text: the pass now
+    /// re-measures the ITEM — <c>Pressable(Text(…))</c> and the bare text alike — and the cap
+    /// arrives through the wrapper on the constraints, so both take one path instead of one path
+    /// and one hand-built copy of it.
+    /// </para>
+    /// </summary>
+    private static int LineCap(Text text, LayoutConstraints constraints) =>
+        constraints.Truncating ? Math.Max(1, text.MaxLines) : text.MaxLines;
 
     /// <summary>
     /// A RICH paragraph: the runs are laid out as one flowing line of text, breaking between WORDS
@@ -37,19 +55,39 @@ internal sealed partial class MeasureVisitor
     /// </para>
     /// </summary>
     private LayoutNode MeasureRuns(LayoutNode result, Text text, IReadOnlyList<TextRun> spans,
-        TypeStyle paragraph, float maxW, LayoutContext ctx)
+        TypeStyle paragraph, float maxW, int maxLines, LayoutContext ctx)
     {
         var lineHeight = paragraph.ScaledLineHeight(ctx.TypeScale);
-        var limit = float.IsPositiveInfinity(maxW) || maxW <= 0 ? float.PositiveInfinity : maxW;
+        // ONLY INFINITY IS UNBOUNDED. A zero-width slot is a real constraint — the flex pass hands
+        // one down whenever a row has nothing left to give — and the plain measurer has always
+        // honoured it. Reading `<= 0` as "no limit" here is what let a rich paragraph report 170dp
+        // into a box of 0. A negative bound floors at zero rather than travelling as a negative
+        // width, which is the one place this is stricter than the plain path.
+        var limit = float.IsPositiveInfinity(maxW) ? float.PositiveInfinity : MathF.Max(0, maxW);
         var fragments = new List<TextFragment>();
         var lines = new List<MeasuredLine>();
 
         float x = 0;
         var line = 0;
         float widest = 0;
+        var cut = false;
+
+        // EVERY line is reported at no more than the room it had, which is what the plain path does
+        // with `Min(candidate, maxWidth)` on each line it commits. The runs path clamped none of
+        // them: a word wider than the slot reported ITS width, so a paragraph of one long word said
+        // 54.4 where the plain one said 10. The glyphs overflow on both and the realizer clips them;
+        // the NUMBER is what layout reads, and a node claiming more room than it was given makes its
+        // parent grow.
+        void CommitLine(float width, bool ellipsized)
+        {
+            var reported = MathF.Min(width, limit);
+            lines.Add(new MeasuredLine(reported, ellipsized));
+            if (reported > widest) widest = reported;
+        }
 
         foreach (var run in spans)
         {
+            if (cut) break;
             var runStyle = run.Resolve(paragraph, ctx.Theme);
 
             foreach (var word in Words(run.Content))
@@ -59,8 +97,15 @@ internal sealed partial class MeasureVisitor
                 var width = ctx.Measurer.Measure(word, runStyle, ctx.TypeScale, float.PositiveInfinity, 1).Width;
                 if (x > 0 && x + width > limit && word != " ")
                 {
-                    lines.Add(new MeasuredLine(x, false));
-                    if (x > widest) widest = x;
+                    // The line is full, and a cap says there is no next one: the paragraph ends
+                    // HERE, with the mark inside the measurement.
+                    if (maxLines > 0 && line + 1 >= maxLines)
+                    {
+                        x = Ellipsize(fragments, runStyle, x, limit, line, lineHeight, ctx);
+                        cut = true;
+                        break;
+                    }
+                    CommitLine(x, ellipsized: false);
                     line++;
                     x = 0;
                 }
@@ -72,13 +117,144 @@ internal sealed partial class MeasureVisitor
             }
         }
 
-        lines.Add(new MeasuredLine(x, false));
-        if (x > widest) widest = x;
+        CommitLine(x, cut);
 
         result.TextRuns = fragments;
         result.Text = new TextMeasurement(widest, lines.Count * lineHeight, lineHeight, lines);
         result.Bounds = new Rect(0, 0, widest, lines.Count * lineHeight);
         return result;
+    }
+
+    /// <summary>
+    /// Ends a cut line with the mark, INSIDE the width the measurement reports — the promise
+    /// <see cref="ITextMeasurer"/> makes and the plain path already keeps.
+    ///
+    /// <para>
+    /// Trailing words are dropped until the mark fits, which the plain path never has to do: there
+    /// a cut line is a NUMBER and the rasterizer re-wraps from the string, while here every word
+    /// carries the rectangle it will be drawn in. Clamping the reported width without dropping them
+    /// would leave glyphs positioned past the box the width promised.
+    /// </para>
+    ///
+    /// <para>
+    /// DROPPING never goes below one word: a line that dropped its way to nothing would report a
+    /// mark standing where a word had been, and an ellipsis alone tells a reader less than a cut
+    /// word does. What happens to that last word instead is that it is CUT — its tail trimmed to
+    /// leave the mark exactly its width. Only when not one character fits beside the mark does the
+    /// fragment go and the mark stand alone, which is the honest answer for a slot narrower than a
+    /// single glyph plus an ellipsis.
+    /// </para>
+    ///
+    /// <para>
+    /// THE MARK BELONGS TO THE TEXT IT TERMINATES, not to the word that failed to fit. Those are
+    /// different runs as often as not — the word that overflowed is usually the first of the NEXT
+    /// run, whose face the reader never sees on this line — so it takes the style, the ink and the
+    /// link of the last VISIBLE fragment left on the line. The link matters most: an ellipsis is
+    /// the tail of the sentence it cut, and one that carried no destination made the end of a
+    /// truncated link unpressable on a target that hit-tests per fragment.
+    /// </para>
+    /// </summary>
+    private float Ellipsize(List<TextFragment> fragments, TypeStyle fallback, float x, float limit,
+        int line, float lineHeight, LayoutContext ctx)
+    {
+        const string mark = "\u2026";
+
+        // The last fragment on the line that a reader can SEE. A trailing space is skipped because
+        // it carries the next run's face and none of its ink — which is exactly the mismatch this
+        // is here to avoid, one fragment further along.
+        TextFragment? Tail()
+        {
+            for (var i = fragments.Count - 1; i >= 0 && fragments[i].Line == line; i--)
+                if (!string.IsNullOrWhiteSpace(fragments[i].Content)) return fragments[i];
+            return null;
+        }
+
+        var tail = Tail();
+        var markWidth = MarkWidth();
+
+        while (x + markWidth > limit && fragments.Count > 1
+               && fragments[^1].Line == line && fragments[^2].Line == line)
+        {
+            x = fragments[^1].X;
+            fragments.RemoveAt(fragments.Count - 1);
+            // Dropping a word can change which run ends the line, and a narrower face needs less
+            // room for the mark — so both are asked again rather than once at the top.
+            tail = Tail();
+            markWidth = MarkWidth();
+        }
+
+        // Dropping stops at one word, so when that word is itself wider than the room the WORD is
+        // what gives: its tail is cut to leave exactly the mark's width. That is the operation the
+        // plain path's measurer performs inside itself, and without it the mark was placed past the
+        // clamped bounds — present in the fragments, invisible behind the realizer's clip, on a
+        // line the measurement already called ellipsized.
+        if (!float.IsPositiveInfinity(limit) && x + markWidth > limit
+            && fragments.Count > 0 && fragments[^1].Line == line)
+        {
+            var last = fragments[^1];
+            var (kept, keptWidth) = LongestPrefixWithin(
+                last.Content, last.Style, limit - markWidth - last.X, ctx);
+
+            if (kept.Length == 0) fragments.RemoveAt(fragments.Count - 1);
+            else fragments[^1] = last with { Content = kept, Width = keptWidth };
+
+            x = MathF.Max(0, MathF.Min(last.X + keptWidth, limit - markWidth));
+        }
+
+        fragments.Add(new TextFragment(mark, tail?.Style ?? fallback, x, line * lineHeight,
+            markWidth, line, tail?.Color, tail?.Destination));
+        return x + markWidth;
+
+        float MarkWidth() => ctx.Measurer
+            .Measure(mark, tail?.Style ?? fallback, ctx.TypeScale, float.PositiveInfinity, 1).Width;
+    }
+
+    /// <summary>
+    /// The longest prefix of <paramref name="word"/> that measures within <paramref name="room"/>,
+    /// and what it measures. Empty when not one character fits.
+    ///
+    /// <para>
+    /// Asked of the MEASURER rather than estimated, because an advance is the measurer's business
+    /// and the whole point of that seam is that a real shaper answers differently from the stand-in.
+    /// Binary search rather than a walk: a long unbreakable word — a URL in a narrow column is the
+    /// case — cost one measurement per character, and against a real shaper those are not
+    /// arithmetic.
+    /// </para>
+    ///
+    /// <para>
+    /// CORRECTNESS DOES NOT ASSUME MONOTONICITY; only optimality does. Every candidate returned is
+    /// one this method measured and saw fit, so a measurer whose widths did not grow with the prefix
+    /// could make it settle for a shorter cut, never for one that overflows. The stand-in is
+    /// monotonic — each character adds a positive advance and the design system has no negative
+    /// tracking — and a shaper's kerning is bounded by the glyph it adds.
+    /// </para>
+    /// </summary>
+    private (string Text, float Width) LongestPrefixWithin(string word, TypeStyle style, float room,
+        LayoutContext ctx)
+    {
+        if (room <= 0 || word.Length <= 1) return (string.Empty, 0);
+
+        var best = (Text: string.Empty, Width: 0f);
+        int low = 1, high = word.Length - 1;
+
+        while (low <= high)
+        {
+            var take = (low + high) / 2;
+            var candidate = word[..take];
+            var width = ctx.Measurer
+                .Measure(candidate, style, ctx.TypeScale, float.PositiveInfinity, 1).Width;
+
+            if (width <= room)
+            {
+                best = (candidate, width);
+                low = take + 1;
+            }
+            else
+            {
+                high = take - 1;
+            }
+        }
+        return best;
     }
 
     /// <summary>

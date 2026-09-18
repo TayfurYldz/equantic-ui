@@ -94,16 +94,14 @@ internal sealed partial class MeasureVisitor
         // regardless of how the container itself is sized.
         LayoutNode MeasureChild(VisualNode child, float w, float h, string childPath,
             bool mainGranted = false, StretchKind stretchW = StretchKind.None,
-            StretchKind stretchH = StretchKind.None)
+            StretchKind stretchH = StretchKind.None, bool truncating = false)
         {
-            return Measure(
-                child,
-                constraints.ForChild(w, h)
-                    .DecidedByContent(
-                        childIndetW && !(mainGranted && horizontal),
-                        childIndetH && !(mainGranted && !horizontal))
-                    .Stretched(stretchW, stretchH),
-                ctx, childPath);
+            var forChild = constraints.ForChild(w, h)
+                .DecidedByContent(
+                    childIndetW && !(mainGranted && horizontal),
+                    childIndetH && !(mainGranted && !horizontal))
+                .Stretched(stretchW, stretchH);
+            return Measure(child, truncating ? forChild.Truncated() : forChild, ctx, childPath);
         }
 
         var children = flex.Children;
@@ -152,26 +150,29 @@ internal sealed partial class MeasureVisitor
             var deficit = rigidSum + gapTotal - mainAvail;
             var textTotal = 0f;
             for (var i = 0; i < children.Count; i++)
-                if (children[i] is Text) textTotal += mains[i];
+                if (TextWithin(children[i]) is not null) textTotal += mains[i];
 
             if (textTotal > 0)
             {
                 for (var i = 0; i < children.Count; i++)
                 {
-                    if (children[i] is not Text text) continue;
+                    // A TEXT CHILD, seen through layout-transparent wrappers. Asking `is Text` here
+                    // is what made `Pressable(Text(…))` run past the end of a fixed row: not a text,
+                    // so not cut, so its floor was its longest word and nothing could shrink it.
+                    if (TextWithin(children[i]) is null) continue;
                     var reduced = MathF.Max(0, mains[i] - deficit * (mains[i] / textTotal));
-                    // Truncation RE-measures, so it has to re-measure in the same face: this was the
-                    // last hand-built merge, and a text that shrinks to an ellipsis against one face
-                    // and draws in another ellipsizes at the wrong word.
-                    var style = text.Resolve(ctx.Theme);
-                    var remeasured = ctx.Measurer.Measure(text.PlainContent, style, ctx.TypeScale, reduced,
-                        Math.Max(1, text.MaxLines));
-                    var node = ctx.Node(text);
-                    node.Text = remeasured;
-                    node.Bounds = new Rect(0, 0, remeasured.Width, remeasured.Height);
-                    laid[i] = node;
-                    rigidSum -= mains[i] - (horizontal ? node.Bounds.Width : node.Bounds.Height);
-                    mains[i] = horizontal ? node.Bounds.Width : node.Bounds.Height;
+                    // The cut is a RE-MEASURE of the item, through the same pass everything else
+                    // takes, carrying the line cap on the constraints. It used to be built here by
+                    // hand from `ctx.Measurer` — which could only ever cut a bare Text, dropped a
+                    // rich text's runs on the floor by rebuilding the node from PlainContent, and
+                    // had already once measured against a different face than the one drawn.
+                    var (tsW, tsH) = CrossStretch(children[i]);
+                    var recut = MeasureChild(children[i], horizontal ? reduced : crossAvail,
+                        horizontal ? crossAvail : reduced, ctx.ChildPath(path, i, children[i]),
+                        stretchW: tsW, stretchH: tsH, truncating: true);
+                    laid[i] = recut;
+                    rigidSum -= mains[i] - (horizontal ? recut.Bounds.Width : recut.Bounds.Height);
+                    mains[i] = horizontal ? recut.Bounds.Width : recut.Bounds.Height;
                 }
             }
 
