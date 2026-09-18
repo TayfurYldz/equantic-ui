@@ -6,8 +6,8 @@ using Xunit;
 namespace eQuantic.UI.Web.Tests;
 
 /// <summary>
-/// The four wrappers that stand between a child and its flex parent — Pressable, Hoverable, Link
-/// and Adjustable — carry the child's WIDTH CONTRACT, not half of it.
+/// The five wrappers that stand between a child and its flex parent — Pressable, Hoverable, Link,
+/// Adjustable and Progress — carry the child's WIDTH CONTRACT, not half of it.
 /// <para>
 /// Each takes `width: 100%` from a Fill child, because a wrapper that hugged would collapse the
 /// child's own 100% against a shrink-to-fit box. None of them took the child's MAX-WIDTH, so a
@@ -42,6 +42,7 @@ public class WrapperLayoutTransparencyTests
         { "Hoverable", new Hoverable(CappedCard(), _ => { }) },
         { "Link", new Link("/somewhere", CappedCard()) },
         { "Adjustable", new Adjustable(CappedCard(), _ => { }) },
+        { "Progress", new Progress(CappedCard()) },
     };
 
     [Theory]
@@ -75,6 +76,54 @@ public class WrapperLayoutTransparencyTests
 
         lowered.Attributes.GetValueOrDefault("style", "").Should().Contain("height: 100%",
             $"{name} stands in for a child that fills the cross axis");
+    }
+
+    /// <summary>
+    /// BOTH walks reach a child THROUGH the wrappers that are not themselves in the sweep — which
+    /// is the half the sweep above cannot see, because it puts one wrapper over a Fill child and
+    /// never nests.
+    /// <para>
+    /// `Simulated`, `InFlow` and `InView` were in the TypeScript `fills` and not in the C# `Fills`.
+    /// A missing arm does not throw: it answers `(false, false)`, which is exactly what a child
+    /// that does not fill answers, so SSR served a hugging host while the hydrated runtime walked
+    /// through and filled.
+    /// <para>
+    /// Then the FIX was half of one. Adding the three to `Fills` and not to `CapsAt` left the host
+    /// taking the child's 100% and dropping its maximum — the same half-contract the Link had, now
+    /// written down three times, and on a ROLE-BEARING host it announces a box wider than the bar
+    /// it names. So this asserts both halves, and the cap is the half that came second.
+    /// </para>
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("Simulated")]
+    [InlineData("InFlow")]
+    [InlineData("InView")]
+    public void TheWholeWidthContractReachesThroughAWrapperTheSweepDoesNotList(string inner)
+    {
+        var fill = new Box(new BoxStyle { Width = SizeValue.Fill, MaxWidth = 320 }, new Text("x"));
+        VisualNode wrapped = inner switch
+        {
+            "Simulated" => new Simulated(new SimulatedState(), fill),
+            "InFlow" => new InFlow(fill),
+            _ => new InView(fill, _ => { }),
+        };
+
+        var row = new Row(gap: 0) { Width = SizeValue.Fill };
+        row.Add(new Progress(wrapped));
+
+        var lowered = Render(row).Children.Should().ContainSingle().Which;
+
+        lowered.Attributes.GetValueOrDefault("style", "").Should().Contain("width: 100%",
+            $"the Fill child is under a {inner}, and the progress host stands in for it — a walk "
+            + "that stops at the wrapper reports (false, false), which is what a child that does "
+            + "not fill reports, so the host hugs on the server and fills in the browser");
+
+        lowered.Attributes.GetValueOrDefault("style", "").Should().Contain("max-width: 320px",
+            $"and the CAP comes through the same {inner} — adding the arm to `Fills` and not to "
+            + "`CapsAt` is the half-contract this repository has now written down three times: the "
+            + "host takes the child's 100% and drops its maximum, so a role-bearing one announces "
+            + "a box wider than the bar it names");
     }
 
     [Fact]

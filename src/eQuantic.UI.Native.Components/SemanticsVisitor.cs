@@ -25,9 +25,16 @@ namespace eQuantic.UI.Native.Components;
 /// <para>
 /// A DECLINE IS A CONSTANT NAMED FOR ITS REASON. The exemption list of <c>VocabularyCoverageTests</c>
 /// carried those reasons in a comment beside a string; they are here now, where the compiler sees the
-/// node and a reviewer sees why. Thirteen nodes announce, twenty-seven decline, and the twenty-seven
-/// are not one kind of silence: pure layout, a wrapper, ornament, an escape hatch that cannot cross,
-/// the expansion seam, and two that are a real gap wearing an exemption.
+/// node and a reviewer sees why. FOURTEEN nodes announce, twenty-seven decline, and the
+/// twenty-seven are not one kind of silence: pure layout, a wrapper, ornament, an escape hatch that
+/// cannot cross, the expansion seam, and two that are a real gap wearing an exemption.
+/// <para>
+/// "Announce" means CAN announce, which is why it is not the same as the arms whose body says
+/// <c>Announce</c>: seven do so unconditionally, and seven more only when there is something to say
+/// — the six <c>Graphic</c> arms when the graphic is labelled, and <see cref="Text"/> when it has
+/// content. Counting only the unconditional seven is the mistake this paragraph was once rewritten
+/// to make.
+/// </para>
 /// </para>
 /// </summary>
 internal sealed partial class SemanticsVisitor(List<SemanticNode> nodes)
@@ -75,7 +82,7 @@ internal sealed partial class SemanticsVisitor(List<SemanticNode> nodes)
     /// The web honours both (<c>WebRealizer.LowerNavigable</c> and <c>LowerOverlay</c>) and Photon is
     /// silent, because every announcement consumes its subtree and doing that to a navigable grid
     /// would hide every row inside it. What they need is a role meaning "a labelled group, keep
-    /// walking", and <see cref="SemanticRole"/> has none: it is ten leaf roles. That is a vocabulary
+    /// walking", and <see cref="SemanticRole"/> has none: it is eleven leaf roles. That is a vocabulary
     /// decision with a bridge per platform behind it —
     /// <see href="https://github.com/eQuantic/equantic-ui/issues/187">#187</see>, which turns both of
     /// these into announcements the day it is answered.

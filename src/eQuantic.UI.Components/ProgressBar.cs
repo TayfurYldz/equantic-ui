@@ -35,8 +35,35 @@ public sealed class ProgressBar : StatefulComponent
 
     public Variant Variant { get; private set; }
 
-    /// <summary>8dp meter styling (goal/quota) instead of the 4dp default.</summary>
-    public bool Prominent { get; init; }
+    /// <summary>
+    /// 8dp meter styling (goal/quota) instead of the 4dp default.
+    /// <para>
+    /// Backed by a FIELD so <see cref="AdoptConfig"/> can copy it. This component is retained across
+    /// the app's rebuilds, and <c>UiComponent.AdoptConfig</c>'s contract is to copy the fresh
+    /// CONFIGURATION — constructor AND init props. An `init` accessor cannot be written from there,
+    /// so a plain auto-property would silently keep the first parent build's value forever: the bar
+    /// would go on announcing a name the screen has since changed.
+    /// </para>
+    /// </summary>
+    public bool Prominent { get => _prominent; init => _prominent = value; }
+
+    /// <summary>
+    /// What the progress is FOR, announced by assistive tech — "Uploading", "Storage used". Spec
+    /// B14 asks for role=progressbar, and a role with no name announces "progress bar" and nothing
+    /// about which one, on a screen that may hold several.
+    /// </summary>
+    public string Label { get => _label; init => _label = value; }
+
+    /// <summary>
+    /// The progress IN WORDS, when the ratio is not what a person would say — "3 of 7 files",
+    /// "2 minutes left". Null announces the number against its range, which a reader renders as a
+    /// percentage by itself and is right for a bare ratio.
+    /// </summary>
+    public string? ValueText { get => _valueText; init => _valueText = value; }
+
+    private bool _prominent;
+    private string _label = "";
+    private string? _valueText;
 
     public override void AdoptConfig(UiComponent next)
     {
@@ -45,6 +72,11 @@ public sealed class ProgressBar : StatefulComponent
         _snapNext = fresh.Value is { } incoming && Value is { } current && incoming < current;
         Value = fresh.Value;
         Variant = fresh.Variant;
+        // The rest of the configuration too, or a parent that renames the bar keeps announcing the
+        // old name: this instance is RETAINED, so what Build reads is whatever was adopted here.
+        _label = fresh.Label;
+        _valueText = fresh.ValueText;
+        _prominent = fresh.Prominent;
     }
 
     public override VisualNode Build(ComponentContext context)
@@ -84,7 +116,17 @@ public sealed class ProgressBar : StatefulComponent
                 // visible ratio glides instead of jumping when only one side moved.
                 track.Add(new Spacer(1000 - filledWeight) { AnimateChanges = animate });
             }
-            return track;
+            // Spec B14: role=progressbar with the value it holds — the value the bar IS DRAWN FROM,
+            // not the caller's, because an announcement that disagreed with the pixels would
+            // describe a different control. That is `filledWeight`, NOT `clamped`: the weights
+            // quantize to a thousandth, so 0.4504 paints 450/550 — the bar is at 0.45 and saying
+            // 0.4504 is the same defect one decimal place further down. The range is 0..1 by this
+            // component's own definition of Value, so it is stated rather than guessed at.
+            return new Progress(track)
+            {
+                Label = Label,
+                Value = new RangeValue(filledWeight / 1000f, 0, 1) { Text = ValueText },
+            };
         }
 
         // Indeterminate: a full-width layer holds the 30% segment by flex weight; LoopMotion sweeps
@@ -98,13 +140,18 @@ public sealed class ProgressBar : StatefulComponent
         }), 300));
         segment.Add(new Spacer(700));
 
-        return new Box(new BoxStyle
+        // Indeterminate keeps the ROLE and carries no value — ARIA's own rule, and the honest one:
+        // the bar is saying that something is happening, which is all it knows.
+        return new Progress(new Box(new BoxStyle
         {
             Width = SizeValue.Fill,
             Height = height,
             Background = theme.SurfaceSubtle,
             CornerRadius = new CornerRadii(theme.Shape(ShapeScale.Full)),
             Clip = true,
-        }, new LoopMotion(segment, LoopEffect.SlideX, SweepFromX, SweepToX, SweepDurationMs));
+        }, new LoopMotion(segment, LoopEffect.SlideX, SweepFromX, SweepToX, SweepDurationMs)))
+        {
+            Label = Label,
+        };
     }
 }

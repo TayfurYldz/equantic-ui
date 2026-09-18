@@ -19,7 +19,9 @@ namespace eQuantic.UI.Native.Engine.Tests;
 ///
 /// <para>
 /// The issue framed the eight as omissions nobody had decided, and asked whether fixing them would
-/// move pixels. Measured, the answer was sharper than that in two ways, and both are pinned below.
+/// move pixels. Measured over the TWENTY wrappers that existed then — the list is twenty-one since
+/// <see cref="Progress"/> joined, and these two numbers are a record of that measurement rather
+/// than a running count — the answer was sharper than that in two ways, and both are pinned below.
 /// ELEVEN of the twenty overflowed a fixed row outright — <c>Pressable</c>, <c>Link</c> and
 /// <c>Hoverable</c> among them, which is most of the tappable text in a real screen — by 128dp
 /// where the text was one unbreakable word and the bare one ellipsized. And the nine that did NOT
@@ -32,7 +34,7 @@ namespace eQuantic.UI.Native.Engine.Tests;
 ///
 /// <para>
 /// So these enumerate BY REFLECTION rather than listing the eight: every wrapper the vocabulary has
-/// is asserted against the bare child, and a twenty-first is covered on the day it is declared.
+/// is asserted against the bare child, and a twenty-second is covered on the day it is declared.
 /// </para>
 /// </summary>
 public class LayoutTransparencyTests
@@ -51,6 +53,7 @@ public class LayoutTransparencyTests
     private static IReadOnlyList<SingleChildNode> Wrappers(VisualNode c) =>
     [
         new Adjustable(c, _ => { }),
+        new Progress(c),
         new CodeSurface(c, new CodeEditorController()),
         new DragDismiss(c),
         new Draggable(c),
@@ -103,6 +106,112 @@ public class LayoutTransparencyTests
             .Should().BeEquivalentTo(["ScrollView", "Overlay", "Positioned"],
                 "a scroller has its own viewport, an Overlay takes no space in the flow, and a "
                 + "Positioned is a contract with a Stack");
+    }
+
+    /// <summary>
+    /// A transparent wrapper does NOT stretch a child that states its own size — in a column that
+    /// fills, under either cross alignment.
+    /// <para>
+    /// This is the native half of the web's role-host rule (<c>RoleBearingHostBoundsTests</c>), and
+    /// it is here because the web fix was challenged as the thing that CREATED a divergence: the
+    /// claim was that native passes the incoming stretch through the wrapper, so a hugging Box
+    /// inside a filling Column resolves to the column's width on Photon while the web host hugs.
+    /// Measured, it does not — a Box with a stated width is a fixed size, and stretch does not
+    /// overrule one. The two targets agree, which is what the web fix bought; before it the web was
+    /// the one that spanned.
+    /// </para>
+    /// <para>
+    /// Swept over every transparent wrapper rather than the two that carry a role, because the rule
+    /// is the shape's and not the role's — the role is only what makes the divergence audible.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ATransparentWrapper_DoesNotStretchAChildThatStatesItsOwnSize()
+    {
+        var stretched = new List<string>();
+
+        foreach (var cross in new[] { CrossAlign.Start, CrossAlign.Stretch })
+        foreach (var wrapper in Transparent(FixedBox(120, 8)))
+        {
+            var column = new Column(gap: 0) { Width = SizeValue.Fill, Cross = cross };
+            column.Add(wrapper);
+
+            var laid = LayoutEngine.Layout(column, 600f, 400f, Ctx);
+            var host = laid.Children[0];
+
+            if (host.Bounds.Width != 120)
+                stretched.Add($"{wrapper.GetType().Name} ({cross}) = {host.Bounds.Width}");
+        }
+
+        string.Join(", ", stretched).Should().BeEmpty(
+            "the column is 600 wide and the child said 120, so a wrapper that came back 600 took a "
+            + "size its child never asked for — and the web host, which hugs, would then be drawing "
+            + "and announcing a different box from the one Photon lays out");
+    }
+
+    /// <summary>
+    /// BLOCK STRETCH does not cross a wrapper that emits a HOST OF ITS OWN — the half the test
+    /// above cannot see.
+    /// <para>
+    /// That one hands each wrapper a Box with a STATED width, and a stated width is immune: stretch
+    /// does not overrule it, so every wrapper passed whether or not it released the stretch. The
+    /// case that tells them apart is a HUGGING child whose size is decided by what goes in it. A
+    /// hugging <see cref="Row"/> inside a 600-wide Box measured 600 under <see cref="Progress"/> and
+    /// 40 under the other three — they reach their child through <c>Constraints.Inline()</c>, which
+    /// drops <see cref="StretchKind.Block"/>, and Progress did not.
+    /// </para>
+    /// <para>
+    /// It matters because the web decided the other way: `LowerProgress` gives the host
+    /// `fit-content` when the child does not ask to fill. So the same tree hugged in a browser and
+    /// spanned on Photon, and on a role-bearing host the box IS the announcement. Reported by review
+    /// AFTER a first probe of the same claim — written with a fixed Box — found nothing and was used
+    /// to argue the defect did not exist.
+    /// </para>
+    /// <para>
+    /// THESE FOUR AND NOT THE VOCABULARY, which is measured rather than assumed: the other fourteen
+    /// transparent wrappers all answer 600 here, and that is not the same defect. They emit no host
+    /// of their own — the child's element is what reaches the parent, so the child IS the box and
+    /// the stretch is its to take — or they have geometry of their own on purpose (`SafeArea` pads,
+    /// `Pinned` sticks, `Flexible` is a flex item). The four below put an ELEMENT between parent and
+    /// child and give it a width, so what crosses them is theirs to answer for.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void BlockStretch_DoesNotCrossAWrapperThatEmitsItsOwnHost()
+    {
+        static Row HuggingRow()
+        {
+            var row = new Row(gap: 0);
+            row.Add(new Box(new BoxStyle { Width = 40, Height = 8 }));
+            return row;
+        }
+
+        SingleChildNode[] hosts =
+        [
+            new Pressable(HuggingRow()),
+            new Link("#", HuggingRow()),
+            new Adjustable(HuggingRow(), _ => { }),
+            new Progress(HuggingRow()),
+        ];
+
+        var crossed = new List<string>();
+
+        foreach (var wrapper in hosts)
+        {
+            // A fixed-width Box is what hands its child block stretch in the first place.
+            var parent = new Box(new BoxStyle { Width = 600 }, wrapper);
+            var laid = LayoutEngine.Layout(parent, 800f, 400f, Ctx);
+            var host = laid.Children[0];
+
+            if (host.Bounds.Width != 40)
+                crossed.Add($"{wrapper.GetType().Name} = {host.Bounds.Width}");
+        }
+
+        string.Join(", ", crossed).Should().BeEmpty(
+            "the row hugs to 40 and the wrapper's own element stands in for it, so a wrapper that "
+            + "came back 600 let the parent's block stretch through — and the web host, which takes "
+            + "fit-content for a child that does not fill, would then draw and announce a different "
+            + "box from the one Photon lays out");
     }
 
     // ---- reader 1 + reader 4: the floor, and the contract that cuts the text -------------------

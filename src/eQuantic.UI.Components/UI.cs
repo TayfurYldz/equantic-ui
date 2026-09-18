@@ -272,6 +272,18 @@ public static class UI
         new DragDismiss(child, onDismiss);
 
     /// <summary>
+    /// Progress semantics: the child REPORTS how far along something is. Not a control — no Tab
+    /// stop and no handler, which is the whole difference from <see cref="Adjustable"/>.
+    /// <para>
+    /// <paramref name="value"/> null is INDETERMINATE, and the role stays: "something is happening
+    /// and nobody knows how far" is exactly what a reader should say. That is the inverse of the
+    /// slider's rule, where a missing value means the node is not a slider at all.
+    /// </para>
+    /// </summary>
+    public static Progress Progress(VisualNode child, string label = "", RangeValue? value = null) =>
+        new Progress(child) { Label = label, Value = value };
+
+    /// <summary>
     /// Arrow-key adjustment semantics: one Tab stop, arrows call back with ±1.
     /// <para>
     /// <paramref name="value"/> is what the control HOLDS, and a slider needs it —
@@ -281,7 +293,7 @@ public static class UI
     /// </para>
     /// </summary>
     public static Adjustable Adjustable(VisualNode child, Action<int> onAdjust,
-        AdjustableValue? value = null, AdjustableRole role = AdjustableRole.Slider) =>
+        RangeValue? value = null, AdjustableRole role = AdjustableRole.Slider) =>
         new Adjustable(child, onAdjust) { Value = value, Role = role };
 
     /// <summary>A keyboard shortcut live while this subtree is mounted (spec S8).</summary>
@@ -413,9 +425,29 @@ public static class UI
         string? placeholder = null, Action? onSubmit = null) =>
         new SearchField(query, onChanged, placeholder, onSubmit);
 
-    /// <summary>Linear progress; null value = indeterminate.</summary>
-    public static ProgressBar ProgressBar(float? value = null, Variant variant = Variant.Primary) =>
-        new ProgressBar(value, variant);
+    /// <summary>
+    /// Linear progress; null value = indeterminate.
+    /// <para>
+    /// <b>This signature WIDENED in the release that added progress semantics, and no compatibility
+    /// form is offered — the architecture does not allow one.</b> C# optional parameters are not
+    /// overloads, so an assembly compiled against the two-parameter form calls it by that exact
+    /// signature and finds a <c>MissingMethodException</c>; the repair <c>TypeStyle</c> used for the
+    /// same problem is a second member keeping the old shape, and here that member cannot exist.
+    /// The twin is JavaScript: two same-named statics collide, which
+    /// <c>UiFactoryConformanceTests.NoFactoryOverloads_TheTwinIsJavaScript</c> refuses by name and
+    /// <c>tsc</c> reports as TS2393 on both generated files. Measured, not assumed — it was written
+    /// and reverted.
+    /// </para>
+    /// <para>
+    /// It is also moot in this release: <see cref="Adjustable"/> beside it took the same break by
+    /// swapping <c>AdjustableValue</c> for <c>RangeValue</c>, and THAT one is unrepairable at any
+    /// price, because a compatibility overload would have to name a type that no longer exists. An
+    /// assembly this form's repair would have saved breaks on the other one regardless.
+    /// </para>
+    /// </summary>
+    public static ProgressBar ProgressBar(float? value = null, Variant variant = Variant.Primary,
+        string label = "", string? valueText = null, bool prominent = false) =>
+        new ProgressBar(value, variant) { Label = label, ValueText = valueText, Prominent = prominent };
 
     /// <summary>Hairline separator.</summary>
     public static Divider Divider(DividerInset inset = DividerInset.None,

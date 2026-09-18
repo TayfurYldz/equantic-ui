@@ -4,8 +4,10 @@ using eQuantic.UI.Primitives;
 namespace eQuantic.UI.Native.Components;
 
 /// <summary>
-/// Interaction and motion — thirteen words. Three are controls and announce as one stop each; nine
-/// wrap a child or are ornament; the thirteenth, <see cref="Navigable"/>, is the gap.
+/// Interaction and motion — fourteen words. Three are controls and announce as one stop each; a
+/// fourth, <see cref="Progress"/>, announces WITHOUT being one — it is read, never moved, which is
+/// why it carries no tab stop and no key handler; nine wrap a child or are ornament; the
+/// fourteenth, <see cref="Navigable"/>, is the gap.
 /// </summary>
 internal sealed partial class SemanticsVisitor
 {
@@ -66,6 +68,20 @@ internal sealed partial class SemanticsVisitor
             node.Label,
             node.Role == AdjustableRole.Slider ? node.Value?.Spoken : null,
             false));
+
+    /// <summary>
+    /// Spec B14: the bar says WHAT IT IS FOR and HOW FAR ALONG. It is not a Slider — the platforms
+    /// split the two (AXProgressIndicator, android.widget.ProgressBar), and calling this one a
+    /// slider would offer VoiceOver's adjust gestures on something nothing can move.
+    /// <para>
+    /// A null value is INDETERMINATE and announces the name alone, which is the honest answer when
+    /// nothing knows how far along it is — the opposite of the Adjustable rule, where a missing
+    /// value means the node was never a slider.
+    /// </para>
+    /// </summary>
+    public bool Visit(Progress node, LayoutNode laidOut) =>
+        Announce(new(SemanticRole.ProgressIndicator, laidOut.Path ?? "", laidOut.Bounds,
+            node.Label, node.Value?.Spoken, false));
 
     /// <inheritdoc cref="AwaitsGroupRole"/>
     public bool Visit(Navigable node, LayoutNode laidOut) => AwaitsGroupRole;

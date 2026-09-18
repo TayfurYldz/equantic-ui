@@ -127,7 +127,10 @@ internal sealed partial class WebLoweringVisitor
         {
             Style = new HtmlStyle
             {
-                Width = adjustableFills.Width ? "100%" : null,
+                // Same rule as LowerProgress, and it bites harder here: this host is a TAB STOP, so
+                // a block div stretched to the container draws the focus ring around empty space
+                // beside the control.
+                Width = adjustableFills.Width ? "100%" : "fit-content",
                 MaxWidth = Size(adjustableCap),
                 PointerEvents = "auto",
                 // BOTH axes, like every other wrapper and like the twin already did. Taking the
@@ -160,6 +163,51 @@ internal sealed partial class WebLoweringVisitor
     }
 
     /// <summary>
+    /// The web twin of the progress semantics (spec B14): one host carrying
+    /// <c>role="progressbar"</c>, its name, and how far along it is. No tab index and no handler —
+    /// nothing here is operable, which is the whole difference from <c>LowerAdjustable</c> above.
+    /// <para>
+    /// An INDETERMINATE bar keeps the role and omits <c>aria-valuenow</c>, which is ARIA's own rule
+    /// and reads as "in progress, amount unknown". Note this is the INVERSE of the slider: there a
+    /// missing value means the node is not a slider and the role is withheld; here a missing value
+    /// is a state the role exists to report. Two rules that look alike and are not, so they are
+    /// written out rather than shared.
+    /// </para>
+    /// <para>SSR half: the same markup either way — there is no handler to leave out.</para>
+    /// </summary>
+    private HtmlElement LowerProgress(Progress progress)
+    {
+        var progressFills = Fills(progress.Child);
+        var progressCap = CapsAt(progress.Child);
+        var element = new RealizedElement("div")
+        {
+            Style = new HtmlStyle
+            {
+                // FIT-CONTENT, not nothing: this host CARRIES THE ROLE, so its box is the bounds a
+                // reader announces and a focus highlight draws. A bare block div stretches to the
+                // container while the bar stays its own width, and the two stop describing the same
+                // thing — on Photon `MeasureWrapper` gives the wrapper exactly the child's bounds.
+                Width = progressFills.Width ? "100%" : "fit-content",
+                // The child's cap comes THROUGH: a wrapper that took the width and dropped the
+                // maximum is the half-contract that made the Link diverge once already.
+                MaxWidth = Size(progressCap),
+                Height = progressFills.Height ? "100%" : null,
+            },
+            RawAttributes = new Dictionary<string, string> { ["role"] = "progressbar" },
+        };
+        if (progress.Label is { Length: > 0 } label) element.RawAttributes["aria-label"] = label;
+        if (progress.Value is { } value)
+        {
+            element.RawAttributes["aria-valuenow"] = TokenCss.Number(value.Now);
+            element.RawAttributes["aria-valuemin"] = TokenCss.Number(value.Min);
+            element.RawAttributes["aria-valuemax"] = TokenCss.Number(value.Max);
+            if (value.Text is { Length: > 0 } spoken) element.RawAttributes["aria-valuetext"] = spoken;
+        }
+        if (Lower(progress.Child, null) is { } child) element.Children.Add(child);
+        return element;
+    }
+
+    /// <summary>
     /// What the host ANNOUNCES itself as — DERIVED from the role and the value together rather than
     /// copied from <see cref="Adjustable.Role"/>, because the pairing is ARIA's rule and this is the
     /// one place in the SDK that speaks ARIA.
@@ -179,7 +227,7 @@ internal sealed partial class WebLoweringVisitor
     /// (<c>lowerAdjustable</c> in lowering.ts).
     /// </para>
     /// </summary>
-    private static string AriaRole(AdjustableRole role, AdjustableValue? value) => role switch
+    private static string AriaRole(AdjustableRole role, RangeValue? value) => role switch
     {
         AdjustableRole.Tablist => "tablist",
         AdjustableRole.Radiogroup => "radiogroup",
@@ -324,9 +372,16 @@ internal sealed partial class WebLoweringVisitor
         Pressable pressable => CapsAt(pressable.Child),
         Hoverable hoverable => CapsAt(hoverable.Child),
         Adjustable adjustable => CapsAt(adjustable.Child),
+        Progress progress => CapsAt(progress.Child),
         Flexible flexible => CapsAt(flexible.Child),
         LoopMotion motion => CapsAt(motion.Child),
         Link link => CapsAt(link.Child),
+        // The three <see cref="Fills"/> gained one round ago. Adding them THERE and not here is the
+        // half-contract this file already records twice: the host takes the child's 100% and drops
+        // its maximum, so a role-bearing one announces a box wider than the bar it names.
+        Simulated simulated => CapsAt(simulated.Child),
+        InFlow inFlow => CapsAt(inFlow.Child),
+        InView inView => CapsAt(inView.Child),
         _ => SizeValue.Hug,
     };
     /// <summary>

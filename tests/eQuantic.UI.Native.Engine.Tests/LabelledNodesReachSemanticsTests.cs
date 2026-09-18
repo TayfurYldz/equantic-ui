@@ -56,6 +56,7 @@ public class LabelledNodesReachSemanticsTests
         ["Navigable"] = label => new Navigable([new Text("row", TypeRole.BodyM)], _ => { }) { Label = label },
         ["Overlay"] = label => new Overlay(new Text("over", TypeRole.BodyM)) { Label = label },
         ["Adjustable"] = label => new Adjustable(new Text("x", TypeRole.BodyM), _ => { }) { Label = label },
+        ["Progress"] = label => new Progress(new Text("bar", TypeRole.BodyM)) { Label = label },
         // Real surfaces with minimal controllers. These two were a `Text` standing in for them —
         // a sample that builds the WRONG TYPE proves nothing and, worse, let
         // `EveryLabelledNode_IsAccountedFor` report complete coverage over a hole. Both are cheap to
@@ -128,7 +129,7 @@ public class LabelledNodesReachSemanticsTests
     /// today adds one node and returns — "one stop for the whole control" — and doing that to a
     /// navigable grid would hide every row from assistive tech, which is worse than the missing
     /// label. What they need is a role that says "a labelled group, keep walking", and
-    /// <see cref="SemanticRole"/> has no such member: it is ten leaf roles. Adding one is a
+    /// <see cref="SemanticRole"/> has no such member: it is eleven leaf roles. Adding one is a
     /// vocabulary decision with a bridge on each platform behind it, so it is a decision to take
     /// rather than a line to write.
     /// </para>
