@@ -160,8 +160,9 @@ public static class ComponentBoundary
     /// <para>
     /// NOT the email realizer, and that is deliberate rather than an omission: it expands through
     /// <c>Build</c> on purpose, because a component that fails must fail the SEND rather than reach
-    /// an inbox dressed as a describe-box. A cycle there is still a stack overflow, and #223 is
-    /// where that is decided — the bound is the same, the answer at the bound is not.
+    /// an inbox dressed as a describe-box. It takes the same bound through <see cref="Enter"/>, and
+    /// answers it by THROWING — catchable, so the render fails and the message is not sent, where a
+    /// stack overflow took the process with it and sent nothing while reporting nothing.
     /// </para>
     /// </summary>
     /// <remarks>
@@ -177,16 +178,7 @@ public static class ComponentBoundary
         ComponentContext context, TState state, Func<VisualNode, TState, TResult> realize)
     {
         if (_depth >= MaxDepth)
-            // What was OBSERVED, not what is suspected: the bound is on depth, so all it knows is
-            // that {MaxDepth} components nested without one of them reaching an ordinary node. That
-            // is a cycle in every case anybody has met, and it is also what a finite tree nested
-            // deeper than this boundary allows would look like — naming only the cycle would hand
-            // that developer a false diagnosis to chase.
-            return realize(Contain(component, new InvalidOperationException(
-                $"{component.GetType().Name} was still building components after {MaxDepth} "
-                + "expansions, so what it builds was never reached: a component that builds itself, "
-                + "a cycle of components, or a tree nested deeper than this boundary allows."),
-                context), state);
+            return realize(Contain(component, Exceeded(component), context), state);
 
         _depth++;
         try
@@ -198,6 +190,91 @@ public static class ComponentBoundary
             _depth--;
         }
     }
+
+    /// <summary>
+    /// One level of the expansion walk, for a realizer that answers the bound ITSELF — and the only
+    /// other thing allowed to move <see cref="_depth"/>, so the two answers share one counter rather
+    /// than keeping two that could disagree.
+    ///
+    /// <para>
+    /// The EMAIL realizer is why this exists. It expands through <c>Build</c> rather than
+    /// <see cref="BuildContained"/> on purpose: a component that fails must fail the send, never
+    /// reach an inbox dressed as a describe-box. So containment is the wrong answer at the bound
+    /// too, and a throw is the right one — it is catchable, it fails the render, and the message
+    /// does not go out. What it replaces is a <see cref="StackOverflowException"/>, which .NET does
+    /// not let anyone catch: the sending process died and nothing was reported at all.
+    /// </para>
+    ///
+    /// <para>
+    /// A struct, disposed by <c>using</c>, because the scope IS the recursion: the walk enters on
+    /// the way down and leaves on the way back up, including when the throw unwinds through it. A
+    /// <c>default</c> one restores nothing, so a value nobody entered cannot corrupt the count.
+    /// </para>
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// The walk is already <see cref="MaxDepth"/> components deep. Same sentence
+    /// <see cref="ExpandContained"/> puts on its containment surface, because it is the same
+    /// observation.
+    /// </exception>
+    public static Expansion Enter(UiComponent component)
+    {
+        if (_depth >= MaxDepth) throw Exceeded(component);
+        return new Expansion(_depth++);
+    }
+
+    /// <summary>
+    /// One level of an expansion walk (see <see cref="Enter"/>), which RESTORES the depth it found
+    /// rather than decrementing.
+    ///
+    /// <para>
+    /// The difference is idempotence, and it is not theoretical for a public value type: a copy of
+    /// this struct disposed beside the original — by hand as well as by its <c>using</c>, or simply
+    /// because a struct assigns by value — would decrement twice. The counter would then sit BELOW
+    /// the walk's real depth, and far enough below it the bound stops being reached at all: the
+    /// stack overflow this exists to replace, arriving through the thing that replaced it.
+    /// </para>
+    ///
+    /// <para>
+    /// Putting back a NUMBER is idempotent by construction, so the second disposal writes the value
+    /// the first one wrote. <see cref="CapabilityScope"/>'s scope reaches the same property with a
+    /// <c>_done</c> flag on a reference type, because what IT restores is a resolver and repeating
+    /// that would resurrect an older one; here there is nothing to resurrect, and a struct keeps the
+    /// per-component allocation off a path Photon walks every frame.
+    /// </para>
+    /// </summary>
+    public readonly struct Expansion : IDisposable
+    {
+        private readonly int _restore;
+        private readonly bool _entered;
+
+        internal Expansion(int restore)
+        {
+            _restore = restore;
+            _entered = true;
+        }
+
+        public void Dispose()
+        {
+            if (_entered) _depth = _restore;
+        }
+    }
+
+    /// <summary>
+    /// What was OBSERVED, not what is suspected: the bound is on depth, so all it knows is that
+    /// <see cref="MaxDepth"/> components nested without one of them reaching an ordinary node. That
+    /// is a cycle in every case anybody has met, and it is also what a finite tree nested deeper
+    /// than this boundary allows would look like — naming only the cycle would hand that developer a
+    /// false diagnosis to chase.
+    /// <para>
+    /// ONE sentence for both answers. A developer who meets the containment panel on a page and the
+    /// failed send in a log is meeting the same fact, and two phrasings of it would read as two
+    /// problems.
+    /// </para>
+    /// </summary>
+    private static InvalidOperationException Exceeded(UiComponent component) =>
+        new($"{component.GetType().Name} was still building components after {MaxDepth} "
+            + "expansions, so what it builds was never reached: a component that builds itself, "
+            + "a cycle of components, or a tree nested deeper than this boundary allows.");
 
     /// <summary>
     /// What a contained failure costs, wherever it comes from: the name on the tally, one call to
