@@ -24,10 +24,16 @@ with silence.
 | `Semantics` | `Walk(laidOut, nodes)` | 13 of 39 | the children are walked |
 | `EmailRealizer` | `Write(node, context, html)` | 6 of 39 | **throws**, naming the node |
 
-Seven defects came through the silent five; the audit's ledger lists them. What holds the line today
-is `VocabularyCoverageTests`: a regex over each method's source, an exemption list per dispatch with
-a reason per entry, three assertions in both directions. It is an instrument, and it has the limits
-of one — it reads the six methods it is told about and not the seventh, it credits text shapes rather
+Nine defects came through the silent five; they are listed further down, with the grouping that
+makes the count reproducible. What held the line until the last dispatch crossed was
+`VocabularyCoverageTests`: a regex over each method's source, an exemption list per dispatch with
+a reason per entry, three assertions in both directions. **It is deleted (S8), and what holds the
+line now is the compiler** — six visitors over `IVisualNodeVisitor`, plus `assertNever` on a
+generated union in the browser. The paragraphs below are kept in the present tense they were written
+in, because they argue for the design rather than report its state; this is the state.
+
+It was an instrument, and it had the limits of one — it read the six methods it was told about and
+not the seventh, it credited text shapes rather
 than semantics, and it moved twice under review before it stopped crediting an arm in one method for
 a claim about another. The structural fix makes the compiler do that job for all seven, and retires
 the regex.
@@ -149,6 +155,21 @@ one file per construct). The vocabulary's four families are the split:
 | Graphics | `Icon`, `Vector`, `Drawing`, `Image`, `Canvas`, `Spinner`, `CameraPreview`, `WebFrame` | `…Visitor.Graphics.cs` |
 | Interaction and motion | `Pressable`, `Link`, `Hoverable`, `Adjustable`, `Navigable`, `Shortcut`, `Draggable`, `DragDismiss`, `Presence`, `LoopMotion`, `InView`, `InFlow`, `Simulated` | `…Visitor.Interaction.cs` |
 | The seam | `UiComponent` | `…Visitor.cs` (the class itself, with the pass state and the helpers) |
+
+**THIS IS THE PLAN, AND THE THREE VISITORS THAT LANDED EACH DEPARTED FROM IT** — the families are a
+starting point, not a contract, and the split that survives review is the one that matches where the
+CODE actually clusters. `WebLoweringVisitor` (S4) took four files and measured which helper went
+where. `MeasureVisitor` (S5) took six, with an `.Intrinsics` file this table does not have.
+`EmitVisitor` (S6) took five and is the widest departure, so it is worth naming precisely:
+
+| here | there | why |
+|---|---|---|
+| `…Visitor.Graphics.cs` | `EmitVisitor.Media.cs` | it holds the decoded bitmap and the camera session, not only rasterized glyphs |
+| `SheetSurface` under Text | `EmitVisitor.Containers.cs` | its door registers a region and descends; it paints no glyphs itself |
+| interaction AND motion in one | `Presence` and `LoopMotion` are in `.Containers.cs` | both change what happens to CHILDREN — a layer, a transform — which is what that file is |
+| `WebFrame` under Graphics | `EmitVisitor.cs`, with the other absences | it draws nothing on Photon; it is a door that descends, beside the eleven positioners |
+
+Read the table below as the shape of the idea. Read a landed visitor's own files for where it went.
 
 Fourteen, four, eight, thirteen and one: forty. The helper methods each arm calls today
 (`LowerBox`, `MeasureFlex`, `EmitText`, …) move with their arm and lose the prefix that named the
@@ -300,11 +321,65 @@ already writes `enums.generated.ts` and `design-system.generated.ts` from the as
   HTML one, and the two share their refusal set so they cannot disagree about what the medium
   carries.
 
+## The pin that policed this, and what it caught
+
+`tests/eQuantic.UI.Native.Engine.Tests/VocabularyCoverageTests.cs` held the line for six dispatches
+and was DELETED when the last one crossed (S6/S8). Its own summary named that retirement condition,
+so this is where its record goes — a deleted file is not an argument that the problem never existed.
+
+**Nine defects reached shipping code through this gap, and only two were found by the pin itself** — counted one per node-and-property, which is the only grouping that does not move:
+
+- `Canvas.Label` silent to VoiceOver — found by a consumer counting accessibility elements.
+- `Image.Label` emitting nothing on Photon while the web had carried `alt` all along.
+- `Vector`, `Drawing` and `CameraPreview` the same — all three in one sweep, once the question was
+  asked of the ASSEMBLY instead of a reader's memory.
+- `Text.Align` dropped by all three native text services for months.
+- `VisualNode.Key`, documented as reconciler identity since the vocabulary existed, read by neither
+  realizer.
+- `CodeSurface` and `SheetSurface` lowering to an EMPTY span on the server since the day each
+  shipped, while the browser drew both — found the day the pin grew to cover the web realizer.
+
+The deleted file said *seven*, and getting a different number from the same list is the point rather
+than a nitpick: it counted the three-node sweep as one item and the two-node one as two. A tally
+whose grouping is not stated is a tally that drifts, which is the defect this whole epic kept
+finding in its own prose.
+
+**Why it was an instrument and not the fix.** A switch arm is not a member, so there is nothing to
+reflect over: the pin named the one method answering each dispatch's question, cut its body out by
+matching braces, blanked comments and strings, and required the node to appear in a shape C# uses to
+dispatch on a type. That is what a closed hierarchy dispatched from outside its own assembly could be
+held to. Its first matcher read the whole FILE, so a node answered in `MinContentWidth` counted as
+measured by `MeasureCore`; review caught it. A regex can be wrong about a dispatch. A compiler cannot.
+
+**What replaced it, per dispatch** — each one left the pin as it crossed, and the reason it could:
+
+| dispatch | what asks the question now |
+|---|---|
+| `Semantics.Walk` | `SemanticsVisitor` — 13 visits, 27 declines, each decline a `const bool` named for its reason |
+| `EmailRealizer.Write`, `EmailRenderer.WalkText` | one shared refusal set on the abstract `EmailWalk`, so neither alternative can answer for a node the other refuses |
+| `lowering.ts` | a GENERATED `NodeKind` union ending in `assertNever`, so a missing kind fails `tsc` |
+| `WebRealizer.LowerNodeKind` | `WebLoweringVisitor`, four partial files |
+| `LayoutEngine.MeasureCore` | `MeasureVisitor` — and two nodes came out of a default arm that had never mentioned them |
+| `PhotonRealizer.EmitNode` | `EmitVisitor` — and a TWELFTH absence appeared that the pin could not have seen |
+
+That last one is the fitting end. The pin's exemption array named eleven nodes for the Photon
+realizer; a twelfth was outside the question it asked. `UiComponent` is abstract and the pin's
+vocabulary is the non-abstract nodes, so the instrument that existed to stop an omission passing for
+a decision could not see this one at all. The compiler demanded the door on the first build.
+
+**And the first thing written on that door was wrong**, which is the more useful half. It said the
+node CANNOT ARRIVE — reasoned from `UiComponent` appearing nowhere in the old `PhotonRealizer.cs`.
+Review challenged it and a probe settled it: making the door throw fails **428 of the 1,237 Photon
+tests**. `MeasureWrapper` builds the `LayoutNode` with the COMPONENT as its `Source` and adopts the
+built subtree beneath it, so a component node reaches the paint walk on every frame that has one.
+Absent from the source is not absent from the walk, and a claim about behaviour is settled by
+running it.
+
 ## Slices
 
 Each slice is one PR, sized for review, and lands with its dispatch's output pins untouched. The
 executor takes them in this order; the auditor rewrites the audit's section 2 and shrinks
-`VocabularyCoverageTests` as each lands.
+`VocabularyCoverageTests` as each lands. **All of them have landed.**
 
 | # | Slice | Nets | Size |
 |---|---|---|---|
@@ -315,8 +390,8 @@ executor takes them in this order; the auditor rewrites the audit's section 2 an
 | S4 | **Landed ([#180](https://github.com/eQuantic/equantic-ui/issues/180)).** `WebRealizer.LowerNodeKind` → `WebLoweringVisitor`, four partial files. `WebRealizer` keeps what a caller sees — the two `Lower` overloads and the atomizing step — plus the gradient and colour cluster, which is a DOCUMENT contract with the client twin rather than any node's lowering, and whose `GradientId` is public API that must not move. Row and Column get their own doors: they were one arm (`FlexNode flex =>`) and are two methods over one `LowerFlex`. `CodeSurface` is the only node with NO lowering — the only one that answers null for every instance, and it says why at its arm, where the old `_ => null` would have covered a thirty-ninth node just as quietly. (Null itself is not rare: `Spacer` returns it outside a flex axis and every wrapper propagates a null child. Review caught that overstatement.) `_simulated` stops being an `AsyncLocal`: it was one because a static class leaks between concurrent SSR requests, and a visitor built once per lowering IS that scope. WHICH HELPER WENT WHERE WAS MEASURED, not guessed — each matched against the families that call it; exactly two cross (`Size`, `Fills`) and stay on the class file, and two (`CapsAt`, `WrapsAnInteractive`) would have been filed under Containers on a guess. THE FORWARDERS STAY, against this plan's own suggestion of folding each helper into its arm: that would make `Visit(Box…)` 134 lines, where forty one-line doors read as a list — and that list IS the exhaustive surface, the shape `EmailWalk` already gives the email pair. `Lower` names nothing stale either; it is what this realizer does. `RealizedElement` gets its own file, having ridden at the tail of the big one. | `ComponentParityFixtureTests`, `PrimitiveValueFixtureTests`, `MarkerParityTests`, the SSR suites and `SurfaceSsrTests` — 731 green and byte-identical across both commits; mutation-checked (deleting `Visit(Spinner…)` fails with CS0535); a member census reporting 109 before and 109 after the split | M |
 | — | **Landed ([#162](https://github.com/eQuantic/equantic-ui/issues/162)).** Audit step 4: `SingleChildNode` names the shape for twenty of the twenty-one wrappers (`Box`'s child is optional, so it stays a container), and `MinContentWidth` and `CrossSizeKind` became one arm over it plus their exceptions NAMED. Three of the five questions hoist; `MinContentWidth` and `PositionedOf` cannot — they read a `LayoutContext` and a `LayoutNode`, which live in `Native.Framework` and `Primitives` may not reference. The two lists were measured first and disagreed in EIGHT places, and the eight are preserved rather than fixed: letting every wrapper look through keeps all 91 goldens green and still breaks a wrapped `Text` in a shrinking row, because the truncation contract finds text among a row's children BY TYPE and the zero floor is what compensates. That is [#225](https://github.com/eQuantic/equantic-ui/issues/225). `VisualNode.cs` became 59 files, one per type — not four shape files, which would have added four entries to the baseline #222 says may only shrink; it lost its 59-type entry and nothing replaced it. | `FlexLayoutTests` (plus the parity guard that caught the blanket fix), `LayoutCompositeTests`, the 91 goldens — 1,243 green, byte-identical | M |
 | S5 | **Landed ([#181](https://github.com/eQuantic/equantic-ui/issues/181)).** `LayoutEngine.MeasureCore` → `MeasureVisitor` in six files, plus `MeasureState.cs` — seven new files, with `MeasureState(LayoutConstraints, string Path)` as a readonly record STRUCT. THE TWO NODES THE DEFAULT ARM HID are the finding: 37 of 40 were named, `Row` and `Column` arrived through `FlexNode`, and `Navigable` and `WebFrame` arrived nowhere — they measured as a zero box with no arm saying so. Their reasons were not lost; they sat in the coverage pin's exemption array, with nothing tying the sentence to the code. The doors keep a distinction the array could not hold: a `WebFrame` CANNOT cross (no browser behind a Photon surface — the same thing `SemanticsVisitor` says as `EscapeHatch`), while a `Navigable` is a real node, a calendar in its own doc's example, whose Photon layout nobody has written. Same answer, different standing. THE FUNNEL KEEPS TAKING THE CONTEXT it does not use, so every recursive call inside the family files reads as it did on the switch and the move is a relocation rather than a rewrite; the context is a field because `IVisualNodeVisitor` carries ONE state and only the constraints and the path vary per node. Both `ExpandContained` callbacks stay `static` with the visitor riding in the state tuple — #224 measured that closure at 2,786 bytes a frame. WHERE EACH HELPER WENT WAS MEASURED, and the first measurement was WRONG in a way worth keeping: taken before the flex pass became its own file, it said none of the fifteen crossed. Re-run against the files as they stand, two do (`CrossSizeKind`, `ResolveSelf`) — the same count S4 found. Thirteen having one caller is still not a placement, so they are grouped by subject in `.Intrinsics` rather than filed beside it. Nine dead deconstructions went with the move. `LayoutEngine.cs` 1,932 → 442 lines. REVIEW FOUND THE ONE THING THAT MATTERED: the visitor was built per `Layout` CALL, and a frame is not one call — the realizer lays the page out and then each `Overlay` against the viewport, sharing one context, so it was one object per LAYER. Cached on that context now. Its guard took three tries and the first two are the lesson: an allocation test failed at 78.1 KB against the 74 KB ceiling and measured 78.1 KB on `main` too (an overlay-heavy frame ALREADY exceeds the budget — reported, not tuned, since inventing a second ceiling blesses a number nobody decided), and a reference-equality test on `MeasurePass` PASSED with the defect reintroduced, because the property caches whatever it makes whether or not `Layout` used it. What works is a tally on the context: nine calls, one pass, and putting the defect back reports "found 9". | `FlexLayoutTests`, `LayoutCompositeTests`, `FlexBasisWrapLayoutTests`, the 91 goldens — 1,241 green and byte-identical; `PerfHarnessTests` **unmoved to the byte**: 73.9 KB/frame pooled and 124.5 KB unpooled on this branch and on `main` alike, 146 commands, realize p50 1.08 ms / p95 1.13 ms against an 8.33 ms budget. (Worth Edgar's eye and not this slice's to fix: the pooled figure is 0.1 KB under its own ceiling, and the harness's comment records 67.5 KB when that ceiling was set.) | M |
-| S6 | `PhotonRealizer.EmitNode` → `EmitVisitor` over `laidOut.Source`; the nine `is` branches after the switch become visits; the two pre-switch guards stay as pre-visit logic on the class. The last dispatch leaves the pin. | `AbstractNodeGoldenTests`, `GoldenSceneTests`, `TreeGpuParityTests`, `BarChartPhotonTests`, `PerfHarnessTests` | M |
-| S8 | `VocabularyCoverageTests` is deleted; the audit's section 2 says what holds the line now: the compiler. | — | S |
+| S6 | **Landed ([#182](https://github.com/eQuantic/equantic-ui/issues/182)).** `PhotonRealizer.EmitNode` → `EmitVisitor`, five partial files plus `EmitState.cs`. THIS ROW WAS WRONG ABOUT THE SHAPE, and measuring it first is what saved the slice: `EmitNode` was not one dispatch with a tail but TWO over the same node — an eighteen-arm chrome switch, then a nine-branch `is` chain every falling-through node reached — and `Box` was in BOTH, four hundred lines apart (the arm painted its chrome, the branch confined its children). The obvious reading, one visitor with 18 + 9 doors, would have silently dropped the chrome of every clipping box. What settled it: NOTHING that `break`s ever touches its children — the only three arms that descend are the only three that `return` — so the second half was never a second decision, it was what to do with the children. One door says both, and `Visit(Box…)` now holds a pair the old code asserted across that distance in a comment. THE TWELFTH DOOR: the exemption array named eleven nodes; a twelfth, `UiComponent`, was outside the question the pin asked, since it is abstract and the pin's vocabulary is the concrete nodes. AND THE FIRST THING I WROTE ON THAT DOOR WAS WRONG — it said the node CANNOT ARRIVE, reasoned from `UiComponent` appearing nowhere in the old file. Review challenged it; the probe settled it: making the door throw fails **428 of the 1,237 Photon tests**, because `MeasureWrapper` builds the `LayoutNode` with the COMPONENT as its `Source` and adopts the built subtree beneath it. It is a layout-transparent wrapper that arrives on every frame with a component in it, and descending is the RIGHT answer rather than the conservative one. Absent from the source is not absent from the walk. THE VISITOR HOLDS NOTHING, and that was forced by the harness, not chosen: with six fields it cost one object per frame, 64 bytes, and `PerfHarnessTests` refused it at **75,778 against a 75,776 ceiling — by two bytes**. Raising the ceiling would have blessed a number nobody decided (S5's own words), so the six moved into `EmitState` and the visitor became a singleton. Allocation is then **75,714 bytes/frame, byte-identical to `main`**. The extraction was proved before anything was written — 27 units tiling 580 lines with no gap or overlap, and boundaries pulled back to include each unit's comment block, since naive `case`-line boundaries would have stranded NINE arm docs and five branch docs (the defect S5 shipped and had to sweep for). `PhotonRealizer.cs` 1,806 → 343 lines. | `AbstractNodeGoldenTests`, `GoldenSceneTests`, `TreeGpuParityTests`, `BarChartPhotonTests`, `PerfHarnessTests` — 1,237 green including the 91 goldens; mutation-checked, and the check asserts the mutation APPLIED before trusting its output | M |
+| S8 | **Landed ([#183](https://github.com/eQuantic/equantic-ui/issues/183)), in S6's PR rather than its own.** It could not wait a commit: removing the last row empties the `Dispatches` array, and a `[Theory]` with no data fails. The file's own summary named this retirement condition — *"this file retires with the last one"* — so the slice that crossed the last dispatch is the one that deletes it. Its record is not lost: the section above this table keeps the nine defects that reached shipping code through the gap, why a regex was the instrument a closed hierarchy could be held to, and what replaced it per dispatch. | — | S |
 
 S7 is placed early on purpose: it is independent of the C# slices, and it is where the browser's
 door gets the guarantee first.
