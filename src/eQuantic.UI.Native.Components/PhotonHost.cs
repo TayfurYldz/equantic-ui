@@ -356,6 +356,16 @@ public sealed class PhotonHost
         var index = ((start % stops.Count) + stops.Count) % stops.Count;
         var stop = stops[index];
 
+        return Land(stop);
+    }
+
+    /// <summary>
+    /// Puts the focus ON a stop, whatever kind it is. Shared by the Tab walk and by a screen
+    /// reader's activate, because landing somewhere is one behaviour and not two: a field that
+    /// starts editing when Tab reaches it has to start editing when TalkBack's double tap does.
+    /// </summary>
+    private bool Land(FocusStop stop)
+    {
         // Bring it into view BEFORE it takes focus: a caret blinking somewhere off screen is the
         // same as no caret at all.
         ScrollIntoView(stop);
@@ -382,7 +392,7 @@ public sealed class PhotonHost
         }
         _focused = stop.Pressable;
         _focusedPath = stop.Path;
-        _focusVisible = true;   // arrived by Tab: this is exactly who the ring is for
+        _focusVisible = true;   // arrived without a pointer: this is exactly who the ring is for
         NeedsRender = true;
         return true;
     }
@@ -1142,7 +1152,13 @@ public sealed class PhotonHost
             NeedsRender = true;
             return true;
         }
-        return false;
+        // The KEYBOARD's own door into an editing surface, and the same one a screen reader takes.
+        // Tab ARRIVES at a code editor or a spreadsheet and leaves the keys with the page (it has
+        // to: the editor would eat the next Tab as an indent), so Enter is how somebody with no
+        // pointer says "in here". Without it the ring was as far as a keyboard could get — this
+        // method's own doc says it runs the focused control "the way Enter and Space do everywhere
+        // else", and for the two surfaces that own the keyboard it ran nothing.
+        return _focusedPath is { Length: > 0 } focused && ActivatePath(focused);
     }
 
     /// <summary>
@@ -1153,10 +1169,15 @@ public sealed class PhotonHost
         _lastFrame is null ? Array.Empty<SemanticNode>() : SemanticsTree.Collect(_lastFrame);
 
     /// <summary>
-    /// Runs the control at <paramref name="path"/>, the way a screen reader's activate action
-    /// does. Resolved out of THIS frame's regions — same reason as every press: the handler on a
-    /// node from an old rebuild closes over dead state. Answers false when the path holds nothing
-    /// pressable.
+    /// Runs the control at <paramref name="path"/>, the way a screen reader's activate action does.
+    /// Resolved out of THIS frame's regions — same reason as every press: the handler on a node from
+    /// an old rebuild closes over dead state. Answers false when the path holds nothing to do.
+    /// <para>
+    /// A pressable RUNS; anything else that takes focus is LANDED ON, which is what activating it
+    /// means: double-tapping a field on TalkBack opens the keyboard in it, exactly as Tab does. Only
+    /// the first half existed, so the Android bridge offered <c>ACTION_CLICK</c> over every text and
+    /// code field — the table says those roles are activatable — and the tap did nothing at all.
+    /// </para>
     /// </summary>
     public bool ActivatePath(string path)
     {
@@ -1168,6 +1189,40 @@ public sealed class PhotonHost
             if (region.Path != path || region.Node.Disabled) continue;
             region.Node.OnPressed?.Invoke();
             NeedsRender = true;
+            return true;
+        }
+
+        var stops = _lastFrame?.FocusStops;
+        if (stops is null) return false;
+        for (var i = 0; i < stops.Count; i++)
+        {
+            // Everything else that takes focus is LANDED ON, and the condition names the two that
+            // are answered ELSEWHERE rather than the kinds it happens to know: a pressable was
+            // already answered above by the region carrying its handler, and an Adjustable is
+            // stepped by AdjustPath, where activating does nothing on any platform. Listing the
+            // kinds instead (an entry, a code surface) silently dropped the SheetSurface, which
+            // announces as a CodeField and carries a stop of its own — the same shape of mistake as
+            // the catch-all this file's NativeRole was written to end.
+            if (stops[i].Path != path) continue;
+            if (stops[i].Pressable is not null || stops[i].Adjustable is not null) continue;
+            Land(stops[i]);
+            // ARRIVING and ENTERING are the same thing for a text field and two different things
+            // for a surface that owns the keyboard, which is the one place `Land` is not the whole
+            // answer. Tab ARRIVES: the ring shows and the next Tab travels on. Activating ENTERS,
+            // which is what a pointer press does (BeginCodeEditing) and what a reader's double tap
+            // means — CodeTarget and SheetTarget both resolve from _textPath, so entering IS
+            // setting it.
+            //
+            // Telling them apart was not a preference. Making the Tab walk enter put the caret in a
+            // code editor, and the editor then ate the next Tab through CodeKeymap — the Studio's
+            // own walk caught a ring that never came back round.
+            if (stops[i] is { Entry: null })
+            {
+                _textPath = stops[i].Path;
+                _focused = null;
+                _focusedPath = null;
+                NeedsRender = true;
+            }
             return true;
         }
         return false;
