@@ -121,6 +121,47 @@ export class SizeValue {
   }
 }
 
+/**
+ * C#'s `WebContent`: what an embedded document IS — an address to load, or a document handed over
+ * whole. Exactly one of the two, which is the entire reason the type exists: `WebFrame` used to
+ * carry both as nullable strings with a precedence between them, stated only in the web realizer's
+ * prose.
+ *
+ * The private constructor is the fence on both sides — `url` and `document` are the only ways to
+ * make one, so no caller can build a value that is an address AND a document.
+ */
+export class WebContent {
+  readonly value: string;
+  readonly isInline: boolean;
+
+  private constructor(value: string, isInline: boolean) {
+    this.value = value;
+    this.isInline = isInline;
+  }
+
+  /** Embed by ADDRESS: someone else's page, a map, a video. */
+  static url(address: string): WebContent {
+    return new WebContent(address, false);
+  }
+
+  /** Embed by VALUE: markup that exists only in memory and never at an address. */
+  static document(markup: string): WebContent {
+    return new WebContent(markup, true);
+  }
+
+  /**
+   * C#'s `default(WebContent)`, which the compiler lowers to `undefined` like any default struct —
+   * so a page writing `new WebFrame(default, "Empty")` emits `new WebFrame(undefined, 'Empty')` and
+   * the field would hold `undefined` behind a `WebContent` annotation. This is what it normalizes
+   * to: empty value, not inline, drawing neither attribute — exactly what C# answers for the same
+   * frame. Same shape as `SizeValue.from`, and called from the same two lines of the same
+   * constructor.
+   */
+  static from(content: WebContent | undefined | null): WebContent {
+    return content ?? new WebContent('', false);
+  }
+}
+
 export class EdgeInsets {
   constructor(
     readonly start = 0,
