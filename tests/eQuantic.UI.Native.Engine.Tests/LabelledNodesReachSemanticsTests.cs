@@ -55,6 +55,7 @@ public class LabelledNodesReachSemanticsTests
         ["CameraPreview"] = label => new CameraPreview(null, 120, 80) { Label = label },
         ["Navigable"] = label => new Navigable([new Text("row", TypeRole.BodyM)], _ => { }) { Label = label },
         ["Overlay"] = label => new Overlay(new Text("over", TypeRole.BodyM)) { Label = label },
+        ["LiveRegion"] = label => new LiveRegion(new Text("region", TypeRole.BodyM)) { Label = label },
         ["Adjustable"] = label => new Adjustable(new Text("x", TypeRole.BodyM), _ => { }) { Label = label },
         ["Progress"] = label => new Progress(new Text("bar", TypeRole.BodyM)) { Label = label },
         // Real surfaces with minimal controllers. These two were a `Text` standing in for them —
@@ -71,11 +72,26 @@ public class LabelledNodesReachSemanticsTests
     };
 
     /// <summary>
-    /// The containers that do not speak yet, named ONCE and read by both the theory below and the
-    /// baseline at the bottom. Two copies of this list is how one of them keeps a node excluded
-    /// after the other has declared it fixed.
+    /// The labelled CONTAINERS — the nodes that announce a group and then keep walking, which is
+    /// what <see cref="SemanticRole.Group"/> made expressible (#187). This list replaced one named
+    /// <c>StillOwedAContainerRole</c> that held <c>Navigable</c> and <c>Overlay</c> and was allowed
+    /// only to shrink; it reached zero, so what is worth writing down is no longer who is silent but
+    /// what a container has to do.
     /// </summary>
-    private static readonly string[] StillOwedAContainerRole = ["Navigable", "Overlay"];
+    private static readonly string[] LabelledContainers = ["LiveRegion", "Navigable", "Overlay"];
+
+    /// <summary>
+    /// The one container whose subtree cannot be reached on Photon — and NOT because of the role.
+    /// <c>MeasureVisitor.Visit(Navigable)</c> measures the node and none of its <c>Rows</c> ("web-only
+    /// today", in that arm's own words), so the group is announced over nothing. The role is still
+    /// the right answer: VoiceOver now says the composite's name where it said nothing at all. It is
+    /// the second half of the contract that has nothing to assert about here yet.
+    /// <para>
+    /// MAY ONLY SHRINK, and the theory below pins the emptiness rather than skipping it — the day
+    /// those rows lay out, this fails and the entry goes.
+    /// </para>
+    /// </summary>
+    private static readonly string[] SubtreeDoesNotLayOutOnPhoton = ["Navigable"];
 
     /// <summary>
     /// The nodes this suite asserts about, taken from the ASSEMBLY rather than written down. The
@@ -89,8 +105,7 @@ public class LabelledNodesReachSemanticsTests
         get
         {
             var data = new TheoryData<string>();
-            foreach (var type in LabelledNodes())
-                if (!StillOwedAContainerRole.Contains(type.Name)) data.Add(type.Name);
+            foreach (var type in LabelledNodes()) data.Add(type.Name);
             return data;
         }
     }
@@ -121,34 +136,117 @@ public class LabelledNodesReachSemanticsTests
     }
 
     /// <summary>
-    /// The two that are NOT fixed, named so they cannot be forgotten and so fixing one fails this
-    /// test rather than passing quietly.
+    /// The container contract, and the ONE thing a group role has to do that no other role here
+    /// does: announce AND keep walking.
     ///
     /// <para>
-    /// <see cref="Navigable"/> and <see cref="Overlay"/> are CONTAINERS. Every case in the walk
-    /// today adds one node and returns — "one stop for the whole control" — and doing that to a
-    /// navigable grid would hide every row from assistive tech, which is worse than the missing
-    /// label. What they need is a role that says "a labelled group, keep walking", and
-    /// <see cref="SemanticRole"/> has no such member: it is eleven leaf roles. Adding one is a
-    /// vocabulary decision with a bridge on each platform behind it, so it is a decision to take
-    /// rather than a line to write.
+    /// <see cref="Navigable"/> and <see cref="Overlay"/> were both silent on Photon while the web
+    /// honoured them, and the reason was not an oversight: every case in this walk added one node
+    /// and RETURNED — "one stop for the whole control" — and doing that to a navigable grid hides
+    /// every row inside it, which is worse than the missing label. #187 was the decision to add the
+    /// role, with a bridge on each platform behind it.
     /// </para>
     ///
     /// <para>
-    /// The web already honours both (`WebRealizer.cs:1356` and `:1198`), so this is a real gap and
-    /// not a deliberate silence. The list may only SHRINK.
+    /// So the assertion is not that the debt list is empty — an empty list passes whatever the walk
+    /// does. It is that the group is THERE and the child is STILL REACHABLE past it. Turn
+    /// <c>AnnounceGroup</c> back into <c>Announce</c> and the first half still passes; the second
+    /// half is what fails.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(Containers))]
+    public void ALabelledContainer_AnnouncesAGroupAndKeepsWalking(string node)
+    {
+        const string label = "a labelled group";
+        var semantics = Describe(Samples[node](label));
+
+        semantics.Should().Contain(s => s.Role == SemanticRole.Group && s.Label == label,
+            $"{node} is a container: a reader stops on it and says its name");
+
+        if (SubtreeDoesNotLayOutOnPhoton.Contains(node))
+        {
+            semantics.Should().ContainSingle(
+                $"{node}'s subtree never lays out on Photon, so the group is announced over "
+                + "nothing — remove it from SubtreeDoesNotLayOutOnPhoton when it does, and this "
+                + "theory asserts the child the way it does for every other container");
+            return;
+        }
+
+        semantics.Should().Contain(s => s.Role == SemanticRole.StaticText,
+            $"{node}'s child has to survive the announcement — consuming the subtree is exactly "
+            + "what kept this role from existing");
+    }
+
+    /// <summary>
+    /// The written list and the walk's own answer, compared. Derived alone would call a container
+    /// that stopped announcing a pass — it would simply leave the set; written alone drifts from
+    /// what the walk does. Disagreeing is the finding either way.
+    /// </summary>
+    [Fact]
+    public void TheLabelledContainers_AreExactlyTheNodesThatAnnounceAGroup()
+    {
+        var announcing = Samples.Keys
+            .Where(n => Describe(Samples[n]("a labelled group")).Any(s => s.Role == SemanticRole.Group))
+            .OrderBy(n => n, StringComparer.Ordinal)
+            .ToArray();
+
+        announcing.Should().Equal(LabelledContainers,
+            "a labelled node either announces a group and keeps walking, or announces a leaf role "
+            + "and consumes it — and which one it is belongs in this file, not only in the walk");
+    }
+
+    /// <summary>
+    /// A modal layer's group belongs to the LAYER, and this is the case the theory above cannot see.
+    ///
+    /// <para>
+    /// It builds each container as the ROOT of the tree, where an <see cref="Overlay"/> looks
+    /// harmless: its page-flow placeholder happens to be the whole viewport and there is no page
+    /// content to be interleaved with. Put the same overlay INSIDE a column and the first version of
+    /// this change announced a group at 400x0 — the placeholder's bounds, since
+    /// <c>MeasureVisitor</c> gives that node no subtree — sitting between the text before it and the
+    /// text after, while the dialog's own elements arrived later under <c>ov0</c> as unrelated
+    /// siblings. A zero-height rect is a touch-exploration target that covers nothing.
+    /// </para>
+    ///
+    /// <para>
+    /// So the announcement happens at the overlay ROOT, and this asserts both halves of what that
+    /// buys: the group has a real box, and the next stop after it is the dialog's own content.
+    /// Found in review; the probe that passed is the theory above.
     /// </para>
     /// </summary>
     [Fact]
-    public void TheContainersStillOwedARole_AreExactlyTheseTwo()
+    public void AModalOverlaysGroup_HasTheLayersBoundsAndSitsWithItsOwnContent()
     {
-        var stillSilent = StillOwedAContainerRole
-            .Where(node => !Describe(Samples[node]("a labelled group")).Any(s => s.Label == "a labelled group"))
-            .ToArray();
+        var dialog = new Column(gap: 0);
+        dialog.Add(new Text("dialog title", TypeRole.BodyM));
+        var page = new Column(gap: 0);
+        page.Add(new Text("before", TypeRole.BodyM));
+        page.Add(new Overlay(dialog) { Label = "Confirm" });
+        page.Add(new Text("after", TypeRole.BodyM));
 
-        stillSilent.Should().Equal(StillOwedAContainerRole,
-            "when a container role lands and one of these starts speaking, remove it from this list "
-            + "— a baseline that only shrinks is the only kind that stays true");
+        var semantics = Describe(page);
+        var group = semantics.Should().ContainSingle(s => s.Role == SemanticRole.Group).Which;
+
+        group.Bounds.Height.Should().BeGreaterThan(0,
+            "the page-flow placeholder measures nothing, and a reader outlines what the group says "
+            + "it is — the LAYER, which is where the dialog actually laid out");
+
+        semantics.SkipWhile(s => s.Role != SemanticRole.Group).Skip(1).Should()
+            .StartWith(semantics.Single(s => s.Label == "dialog title"),
+                "a group is a stop you walk INTO, so what follows it has to be what it holds — "
+                + "announced in the page flow it was followed by the text after the overlay instead");
+    }
+
+    /// <summary>The containers, for the theory above.</summary>
+    public static TheoryData<string> Containers
+    {
+        get
+        {
+            var data = new TheoryData<string>();
+            foreach (var name in LabelledContainers) data.Add(name);
+            return data;
+        }
     }
 
     /// <summary>An unlabelled node stays decorative — the honest answer for pure ornament, and the

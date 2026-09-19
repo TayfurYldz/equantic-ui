@@ -77,6 +77,8 @@ export type IconsValue =
 
 export type ImageFitValue = 'contain' | 'cover' | 'stretch';
 
+export type LiveRegionUrgencyValue = 'polite' | 'assertive';
+
 export type LoopEffectValue = 'slideX';
 
 export type MainAlignValue = 'start' | 'center' | 'end' | 'spaceBetween';
@@ -109,7 +111,7 @@ export type SemanticCheckValue = 'off' | 'on' | 'mixed';
 
 export type SemanticRoleValue =
   'staticText' | 'button' | 'link' | 'textField' | 'codeField' | 'slider' | 'image' | 'checkbox'
-  | 'switch' | 'gridCell' | 'progressIndicator';
+  | 'switch' | 'gridCell' | 'progressIndicator' | 'group';
 
 export type ShapeScaleValue =
   'none' | 'extraSmall' | 'small' | 'medium' | 'large' | 'extraLarge' | 'full';

@@ -42,6 +42,24 @@ public enum SemanticRole : byte
     /// </para>
     /// </summary>
     ProgressIndicator,
+
+    /// <summary>
+    /// A LABELLED GROUP THAT KEEPS WALKING — the one container role, and the only one here that does
+    /// not consume what is inside it. A reader stops on it, says its name, and then goes on into the
+    /// rows or the fields it holds.
+    /// <para>
+    /// It exists because every other role here is a LEAF: announcing consumes the subtree, which is
+    /// right for a button whose inner text is its name and catastrophic for a navigable grid, whose
+    /// every row would vanish. <see cref="Navigable"/> and <see cref="Overlay"/> were both declining
+    /// on Photon for exactly that reason while the web honoured them (#187), and a live region could
+    /// not have existed at all without it.
+    /// </para>
+    /// <para>
+    /// The platforms all have it: AXGroup on macOS, <c>android.view.ViewGroup</c> with screen-reader
+    /// focusability off, and an accessibility container on UIKit. Appended, by the rule above.
+    /// </para>
+    /// </summary>
+    Group,
 }
 
 /// <summary>A check's state, in ARIA's own three words. Mixed exists for checkboxes and nothing
@@ -105,6 +123,16 @@ public enum SemanticCheck : byte
 /// <para>A TRAIT rather than a role, because a heading is still static text — the bridges add
 /// the platform's header trait on top of what they already report.</para>
 /// </param>
+/// <param name="Live">
+/// Set when this node is a LIVE REGION: the platform watches it and announces a change inside it
+/// wherever the user happens to be, without moving focus. Null for everything else, which is almost
+/// everything — a region that interrupts when nothing happened is worse than one that never speaks.
+/// <para>Only <see cref="SemanticRole.Group"/> carries it, because announcing a change means
+/// re-reading what is INSIDE, and every other role here consumes its subtree.</para>
+/// <para>It is the DATA an announcement needs, and on Photon nothing posts one yet: the semantics
+/// tree is a per-frame snapshot with nothing to compare against, so the frame-to-frame diff is its
+/// own slice. The fence is written where the behaviour is — <c>SemanticsVisitor.Visit(LiveRegion)</c>.</para>
+/// </param>
 [ServerOnly]
 public readonly record struct SemanticNode(
     SemanticRole Role,
@@ -117,4 +145,54 @@ public readonly record struct SemanticNode(
     bool? Expanded = null,
     bool Current = false,
     bool? Selected = null,
-    int HeadingLevel = 0);
+    int HeadingLevel = 0,
+    LiveRegionUrgency? Live = null)
+{
+    /// <summary>
+    /// The shape this type had before it could be a LIVE REGION, kept so it still EXISTS in
+    /// metadata. C# optional parameters are not overloads: the default is baked into each call site,
+    /// so an assembly compiled against the eleven-parameter constructor calls a signature that
+    /// adding a twelfth deletes, and finds a <c>MissingMethodException</c> at load. The rule and its
+    /// repair are <see cref="TypeStyle"/>'s, which met this first.
+    ///
+    /// <para>
+    /// EVERY parameter is required here, defaults and all, which is not a style choice: binary
+    /// compatibility needs the SIGNATURE, and leaving the tail optional makes a shorter call match
+    /// both constructors with neither better, so the compiler refuses it (CS0121). Copying this
+    /// repair with the defaults left on is exactly what happened first, and it broke every existing
+    /// six-argument call in the tree. <see cref="TypeStyle"/>'s does the same and says nothing about
+    /// it, so it is written down here.
+    /// </para>
+    /// </summary>
+    public SemanticNode(SemanticRole Role, string Path, Rect Bounds, string Label, string? Value,
+        bool Disabled, SemanticCheck? Checked, bool? Expanded, bool Current,
+        bool? Selected, int HeadingLevel)
+        : this(Role, Path, Bounds, Label, Value, Disabled, Checked, Expanded, Current, Selected,
+            HeadingLevel, null)
+    {
+    }
+
+    /// <summary>
+    /// The eleven-output <c>Deconstruct</c>, kept for the SAME reason and by the same rule — the
+    /// half that is easy to forget, because nothing in the source mentions it. A positional record
+    /// synthesises one output per parameter, so adding <see cref="Live"/> REPLACED the eleven-output
+    /// method rather than adding to it. One fix without the other is the half-fix twice over: the
+    /// constructor covers construction, this covers reading, and a consumer does both.
+    /// </summary>
+    public void Deconstruct(out SemanticRole Role, out string Path, out Rect Bounds, out string Label,
+        out string? Value, out bool Disabled, out SemanticCheck? Checked, out bool? Expanded,
+        out bool Current, out bool? Selected, out int HeadingLevel)
+    {
+        Role = this.Role;
+        Path = this.Path;
+        Bounds = this.Bounds;
+        Label = this.Label;
+        Value = this.Value;
+        Disabled = this.Disabled;
+        Checked = this.Checked;
+        Expanded = this.Expanded;
+        Current = this.Current;
+        Selected = this.Selected;
+        HeadingLevel = this.HeadingLevel;
+    }
+}
