@@ -1216,7 +1216,13 @@ public sealed class PhotonHost
             // Telling them apart was not a preference. Making the Tab walk enter put the caret in a
             // code editor, and the editor then ate the next Tab through CodeKeymap — the Studio's
             // own walk caught a ring that never came back round.
-            if (stops[i] is { Entry: null })
+            //
+            // Asked POSITIVELY, by what the stop IS. The first version asked by elimination — "not
+            // a text field, so a surface" — and the Navigable stop that arrived one PR later
+            // carried neither, so activating a calendar put its own path in _textPath, left every
+            // target null and killed the arrows the composite exists for. A stop that is none of
+            // these ARRIVES and nothing more, which is the right default for whatever comes next.
+            if (stops[i] is { Code: not null } or { Sheet: not null })
             {
                 _textPath = stops[i].Path;
                 _focused = null;
@@ -2102,6 +2108,28 @@ public sealed class PhotonHost
             {
                 if (stops[i].Path != focusedPath || stops[i].Adjustable is not { } adjustable) continue;
                 adjustable.OnAdjust(key is "ArrowRight" or "ArrowUp" ? 1 : -1);
+                NeedsRender = true;
+                return true;
+            }
+        }
+
+        // A two-dimensional COMPOSITE under focus answers the moves its keyboard declares: arrows
+        // walk a cell, PgUp/PgDn a page, +Shift a section, Home/End the row's bounds. Resolved out of
+        // THIS frame's stops by path, like the Adjustable above, and read from NavigableKeys — the
+        // very table the web realizer reads, which is why that table moved to where both can.
+        //
+        // Nothing dispatched here at all before the rows laid out (#248): Navigable.OnMove was wired
+        // on one target, so a calendar on Photon was a grid you could not walk. A key the grid does
+        // not claim answers null and travels on, so Tab and Escape still belong to the page.
+        if (modifiers is KeyModifiers.None or KeyModifiers.Shift
+            && _focusedPath is { Length: > 0 } gridPath
+            && NavigableKeys.Move(key, modifiers.HasFlag(KeyModifiers.Shift)) is { } move
+            && _lastFrame?.FocusStops is { } gridStops)
+        {
+            for (var i = 0; i < gridStops.Count; i++)
+            {
+                if (gridStops[i].Path != gridPath || gridStops[i].Grid is not { } grid) continue;
+                grid.OnMove(move);
                 NeedsRender = true;
                 return true;
             }

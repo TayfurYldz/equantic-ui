@@ -48,8 +48,13 @@ internal sealed class InputSink(
     public InputSink WithoutFocusStops() =>
         new(hits, hovers, scrolls, drags, links, shortcuts, texts, stops, codes, sheets, cursors, canvases, Clip, suppressFocusStops: true);
 
-    /// <summary>The Adjustable's own stop — never suppressed: it is the replacement, not the noise.</summary>
-    public void AddAdjustable(FocusStop stop) => stops.Add(stop);
+    /// <summary>
+    /// A COMPOSITE's own stop — never suppressed, because it is the replacement for the stops inside
+    /// it rather than one more of them. An Adjustable registers one and so does a Navigable: both
+    /// are one Tab stop with a keyboard of their own, and both suppress what is underneath
+    /// (<see cref="WithoutFocusStops"/>) in the same breath.
+    /// </summary>
+    public void AddComposite(FocusStop stop) => stops.Add(stop);
 
     public void Add(HitRegion region)
     {
@@ -96,8 +101,12 @@ internal sealed class InputSink(
 
     public void Add(SheetRegion region)
     {
+        // The stop carries the SURFACE, like a text entry and a code surface carry theirs. It used
+        // to carry nothing but a path, and every reader then had to work out what it was by
+        // ELIMINATION — which is how a Navigable stop, added later and also carrying neither, fell
+        // through a branch meant for editing surfaces and put a calendar into text mode.
         if (!suppressFocusStops)
-            stops.Add(new FocusStop(region.Path, null, null, region.Bounds));
+            stops.Add(new FocusStop(region.Path, null, null, region.Bounds, Sheet: region.Surface));
         if (!Visible(region.Bounds)) return;
         sheets.Add(region);
     }
