@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text.RegularExpressions;
 using eQuantic.UI.Compiler;
 using FluentAssertions;
 using Microsoft.CodeAnalysis;
@@ -244,6 +245,200 @@ public class SharedComponentTranspilationTests
         emitted.Should().ContainSingle(result => result.ComponentName == "PretendHelper");
         emitted.Single().Success.Should().BeTrue(
             string.Join("; ", emitted.Single().Errors.Select(error => error.Message)));
+    }
+
+    /// <summary>
+    /// AN EXTENSION GOES HOME, and an extension over the runtime VOCABULARY is no exception. JS has
+    /// none, so <c>node.Centered()</c> lowers to <c>VisualNodeExtensions.centered(node)</c> with the
+    /// receiver first — the shape every other reduced call already took.
+    /// <para>
+    /// It used to survive as a reduced call, on the reasoning that the runtime carries the
+    /// behaviour as an instance method. It did, because the runtime mirrored it there for this
+    /// lowering — on <c>VisualNode</c> AND on <c>Component</c>, with a <c>setCenterWrapper</c> seam
+    /// between them to break the import cycle that arrangement created. Three artefacts, and the
+    /// collision in #245: <c>class StatTile(string label, bool centered = false)</c> lowered its
+    /// captured parameter to a field of that name, the field shadowed the method, and the page
+    /// failed only in the browser — <c>statTile(...).centered is not a function</c>.
+    /// </para>
+    /// <para>
+    /// Asked HERE because this is the pipeline where symbols bind. The same question asked of
+    /// <c>ComponentCompiler.CompileSource</c> with no project compilation answers
+    /// <c>.centered()</c> under either lowering — measured, which is why the coverage test that
+    /// used to ask it there is gone rather than inverted.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AnExtensionOverTheRuntimeVocabulary_GoesHomeToItsStatic()
+    {
+        var modules = TranspileSharedComponents();
+
+        var home = modules.Where(module => module.Value.Contains("VisualNodeExtensions.centered(",
+            StringComparison.Ordinal)).Select(module => module.Key).ToList();
+        home.Should().NotBeEmpty("the shared library centres nodes in a dozen places");
+
+        var reduced = modules
+            .Where(module => Regex.IsMatch(module.Value, @"(?<!VisualNodeExtensions)\.centered\("))
+            .Select(module => module.Key)
+            .ToList();
+        reduced.Should().BeEmpty(
+            "an instance `centered()` is a member every component carries, and a component's own "
+            + "primary-constructor parameter named `centered` shadows it (#245)");
+    }
+
+    /// <summary>
+    /// The source this asks about: a STATIC HELPER that centres a node, and a component that calls
+    /// it. Neither is library surface — the question is about the emission, and a production class
+    /// carrying it would be a class kept alive for a test.
+    /// </summary>
+    private const string HelperCentresSource = """
+        using eQuantic.UI.Primitives;
+
+        namespace App;
+
+        public static class Helpers
+        {
+            public static VisualNode Boxed() => new Text("x").Centered();
+        }
+        """;
+
+    /// <summary>
+    /// A HOME THE CONVERSION INTRODUCED IS IMPORTED WHEREVER IT IS INTRODUCED. The call is written
+    /// on the receiver, so the home's name appears in no syntax the import scanner walks — the
+    /// component path has always merged the conversion's own set for that reason, and the static
+    /// helper path merged only the app-level half. Measured, before the fix:
+    /// <code>
+    /// import { Text } from "@equantic/runtime";
+    /// export class Helpers {
+    ///     static boxed() { return VisualNodeExtensions.centered(new Text('x')); }
+    /// }
+    /// </code>
+    /// A qualified call to a name the module never imports — "VisualNodeExtensions is not defined",
+    /// at LOAD rather than at the call, so the page shows nothing at all.
+    /// <para>Mutation: drop the `UsedRuntimeTypes` union from the helper path and the import goes
+    /// with it.</para>
+    /// </summary>
+    [Fact]
+    public void AStaticHelper_ImportsTheExtensionHomeItCalls()
+    {
+        var path = Path.Combine(RepoRoot(), "tests", "eQuantic.UI.Web.Tests", "Fixtures", "Helpers.cs");
+        var compiler = new ComponentCompiler { SymbolsAreAuthoritative = false };
+        compiler.SetProjectCompilation(BindingCompilation(HelperCentresSource, path));
+
+        var helper = compiler.CompileSource(HelperCentresSource, path)
+            .Single(result => result.ComponentName == "Helpers").TypeScript;
+
+        helper.Should().Contain("VisualNodeExtensions.centered(", "the extension goes home");
+        helper.Should().MatchRegex(@"import \{[^}]*\bVisualNodeExtensions\b[^}]*\} from ""@equantic/runtime""",
+            "and a qualified call to a name the module does not import fails the whole module at load");
+    }
+
+    /// <summary>
+    /// The same question one module kind over: a RECORD whose method centres a node. A record is
+    /// emitted by its own emitter with its own import block, so "the component path merges it" says
+    /// nothing about this one.
+    /// </summary>
+    private const string RecordCentresSource = """
+        using eQuantic.UI.Primitives;
+
+        namespace App;
+
+        public record Card(string Title)
+        {
+            public VisualNode Boxed() => new Text(Title).Centered();
+        }
+        """;
+
+    /// <summary>
+    /// AND THE RECORD PATH IS ITS OWN IMPORT BLOCK. `RecordTypeEmitter.EmitModule` builds its
+    /// imports from a SYNTAX scan, and a reduced extension call names its home in no syntax — so
+    /// the third module kind repeated the second one's bug. Measured, before the fix:
+    /// <code>
+    /// import { $eq, Text } from "@equantic/runtime";
+    /// export class Card { … boxed() { return VisualNodeExtensions.centered(new Text(this.title)); } }
+    /// </code>
+    /// A qualified call to a name the module never imports, which fails at LOAD rather than at the
+    /// call — so a page holding one such record renders nothing at all.
+    /// <para>Mutation: drop the `UsedRuntimeTypes` union from the record path and the import goes
+    /// with it, while the call stays.</para>
+    /// </summary>
+    [Fact]
+    public void ARecord_ImportsTheExtensionHomeItCalls()
+    {
+        var path = Path.Combine(RepoRoot(), "tests", "eQuantic.UI.Web.Tests", "Fixtures", "Card.cs");
+        var compiler = new ComponentCompiler { SymbolsAreAuthoritative = false };
+        compiler.SetProjectCompilation(BindingCompilation(RecordCentresSource, path));
+
+        var record = compiler.CompileSource(RecordCentresSource, path)
+            .Single(result => result.ComponentName == "Card").TypeScript;
+
+        record.Should().Contain("VisualNodeExtensions.centered(", "the extension goes home here too");
+        record.Should().MatchRegex(@"import \{[^}]*\bVisualNodeExtensions\b[^}]*\} from ""@equantic/runtime""",
+            "and a record module that names a home it does not import dies at load, like any other");
+    }
+
+    /// <summary>
+    /// A Primitives extension whose home the runtime does NOT provide. `CurveEvaluator` is the
+    /// cubic-bezier solver behind `Curve`; on the web a transition IS a CSS timing function, so the
+    /// browser evaluates the curve and the runtime exports no twin.
+    /// </summary>
+    private const string CurveSource = """
+        using eQuantic.UI.Primitives;
+
+        namespace App;
+
+        public static class Curves
+        {
+            public static float At(Curve curve, float t) => curve.Ease(t);
+        }
+        """;
+
+    /// <summary>
+    /// A HOME GOES HOME ONLY IF THE RUNTIME SAYS IT PROVIDES ONE. The namespace cannot decide it:
+    /// `eQuantic.UI.Primitives` routes to the runtime implicitly, and it also holds types the
+    /// runtime deliberately does not export. Sending `CurveEvaluator.Ease` home would emit
+    /// `import { CurveEvaluator } from "@equantic/runtime"` against a bundle with no such export —
+    /// which fails the whole module at LOAD, where the reduced form it had before fails only at the
+    /// call. Neither works; one is strictly worse, and this PR must not introduce it.
+    /// <para>
+    /// `[RuntimeProvided]` is what decides, and it is the attribute's own contract ("the TS export
+    /// must carry the SAME name"). `VisualNodeExtensions` carries it; `CurveEvaluator` does not.
+    /// </para>
+    /// <para>Mutation: take the attribute off `VisualNodeExtensions` and the shared twins revert to
+    /// `.centered()`, failing the byte fixtures and the pin above; put one on `CurveEvaluator` and
+    /// this case fails instead.</para>
+    /// </summary>
+    [Fact]
+    public void AHomeTheRuntimeDoesNotProvide_KeepsTheReducedCall()
+    {
+        var path = Path.Combine(RepoRoot(), "tests", "eQuantic.UI.Web.Tests", "Fixtures", "Curves.cs");
+        var compiler = new ComponentCompiler { SymbolsAreAuthoritative = false };
+        compiler.SetProjectCompilation(BindingCompilation(CurveSource, path));
+
+        var emitted = compiler.CompileSource(CurveSource, path)
+            .Single(result => result.ComponentName == "Curves").TypeScript;
+
+        emitted.Should().NotContain("CurveEvaluator",
+            "the runtime exports no twin, so naming the home would import what the bundle has not");
+        emitted.Should().Contain(".ease(", "it keeps the reduced form it always had");
+    }
+
+    /// <summary>The semantic setup the SDK gives eqc, for a source of this test's own.</summary>
+    private static CSharpCompilation BindingCompilation(string source, string path)
+    {
+        var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!)
+            .Split(Path.PathSeparator)
+            .Where(dll => dll.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+            .Select(dll => (MetadataReference)MetadataReference.CreateFromFile(dll))
+            .ToList();
+        return CSharpCompilation.Create("BoundProbe",
+            [
+                CSharpSyntaxTree.ParseText(source, path: path),
+                CSharpSyntaxTree.ParseText(
+                    "global using System;\nglobal using System.Collections.Generic;\nglobal using System.Linq;",
+                    path: "GlobalUsings.g.cs"),
+            ],
+            references,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
     }
 
     [Fact]

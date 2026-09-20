@@ -24,8 +24,8 @@ export class DynamicElement extends HtmlElement {
   tagName = 'div';
   innerText?: string;
   customAttributes?: Record<string, string>;
-  // className/onClick/children come typed from the HtmlElement base; the config narrows
-  // structurally at the Object.assign boundary — render() below only ever needs `render()`.
+  // className/onClick/children come typed from the HtmlElement base, which is where the DOM
+  // surface lives — a component carries none of it (#245).
 
   constructor(config?: DynamicElementConfig) {
     super();

@@ -178,18 +178,30 @@ public class InvocationStrategy : IExpressionIrStrategy
             // their dedicated strategies run at higher priority.
             if (symbol is { IsExtensionMethod: true, ReducedFrom: not null, ContainingType: not null })
             {
-                // An extension over the RUNTIME VOCABULARY has no module to go home to — the
-                // hand-written twin carries the behaviour as an instance method, so the reduced
-                // form survives as a reduced form. Importing the C#-side static class would ask
-                // for a file the runtime never emits.
-                if (IsRuntimeVocabulary(symbol.ContainingType))
-                    return JsExpr.Call(JsExpr.Member(callerIr, methodName.ToCamelCase()), argIrs);
+                // An extension over the RUNTIME VOCABULARY goes home too — but only when the runtime
+                // SAYS it provides the home, which is what [RuntimeProvided] declares and what its
+                // own doc requires ("the TS export must carry the SAME name"). `Centered` used to
+                // survive as a reduced form on the reasoning that the runtime carries the behaviour
+                // as an instance method; it did, because the runtime mirrored it there FOR this
+                // lowering, and that mirror is what made `centered` a member of every component for
+                // a primary-constructor parameter to shadow (#245).
+                //
+                // The namespace alone is not enough to decide it. `eQuantic.UI.Primitives` routes
+                // to the runtime IMPLICITLY, and the namespace holds types the runtime deliberately
+                // does not export — `CurveEvaluator` among them, the cubic-bezier solver a page
+                // never asks for because a web transition is a CSS timing function. Sending its
+                // `Ease` home would import a name the bundle has no export for, which fails the
+                // whole module at load rather than at the call. So a home without the attribute
+                // keeps the reduced form it always had.
+                var declaredHere = symbol.ContainingType.Locations.Any(location => location.IsInSource);
 
                 // An extension declared OUTSIDE this compilation has no module to go home to:
                 // emitting `MemoryExtensions.startsWith(...)` names a class the bundle never
                 // contains, and the failure surfaces as a bare "is not defined" in the browser.
-                if (!symbol.ContainingType.Locations.Any(location => location.IsInSource)
-                    && !IsFrameworkProvided(symbol.ContainingType))
+                // This stays FIRST: it is the verdict `BclSurfaceAuditTests` records for the BCL's
+                // own extensions, and reordering it around the clause below silently turned
+                // `Enumerable.Index` and `Enumerable.Shuffle` from fenced into emitted. Measured.
+                if (!declaredHere && !IsFrameworkProvided(symbol.ContainingType))
                 {
                     context.Report(invocation, ConversionSeverity.Error, "EQ2004",
                         $"'{symbol.ContainingType.ToDisplayString()}.{symbol.Name}' is an extension "
@@ -197,9 +209,29 @@ public class InvocationStrategy : IExpressionIrStrategy
                         + "part of this compilation, so nothing emits it. Use an instance member, or "
                         + "add a strategy for it.");
                 }
+                // A FRAMEWORK home the runtime does not EXPORT keeps the reduced form it always
+                // had, and only the ATTRIBUTE can answer that. The namespace cannot: `CurveEvaluator`
+                // sits in `eQuantic.UI.Primitives` and the runtime exports no twin for it, so
+                // asking `IsRuntimeProvided()` here — which is the broader namespace-or-attribute
+                // rule the IMPORT routing uses — sent its `Ease` home again and imported a name the
+                // bundle has not. Measured: `AHomeTheRuntimeDoesNotProvide_KeepsTheReducedCall`
+                // failed on `import { Curve, CurveEvaluator }`.
+                //
+                // The two questions are genuinely different, which is why the predicates are. This
+                // one is "does the runtime export a home under this name", answered by the
+                // attribute's own contract. `RegisterIntroduced` answers "given that we emitted a
+                // qualified call, where does its import come from", and there the namespace counts
+                // too — a home the attribute marks must reach `UsedRuntimeTypes` whatever namespace
+                // it lives in, which is the half that was missing.
+                else if (!declaredHere && !symbol.ContainingType.GetAttributes()
+                             .Any(a => a.AttributeClass?.Name == "RuntimeProvidedAttribute"))
+                {
+                    return JsExpr.Call(JsExpr.Member(callerIr, methodName.ToCamelCase()), argIrs);
+                }
                 // The declaring class never appears in the SOURCE (the call is reduced), so the
-                // syntax-walking import collector can't see it — register the name we introduced.
-                context.UsedAppTypes.Add(symbol.ContainingType.Name);
+                // syntax-walking import collector can't see it — register the name we introduced,
+                // in the bucket its namespace decides (runtime-provided or app-level).
+                symbol.ContainingType.RegisterIntroduced(context);
                 var receiverFirst = string.IsNullOrEmpty(args) ? caller : $"{caller}, {args}";
                 return JsExpr.Callish($"{symbol.ContainingType.Name}.{methodName.ToCamelCase()}({receiverFirst})");
             }
@@ -423,11 +455,5 @@ public class InvocationStrategy : IExpressionIrStrategy
     /// Types the RUNTIME provides a hand-written twin for — the shared vocabulary. Same rule the
     /// object-creation and <c>with</c> paths use.
     /// </summary>
-    private static bool IsRuntimeVocabulary(ITypeSymbol type)
-    {
-        var ns = type.ContainingNamespace?.ToDisplayString() ?? string.Empty;
-        return ns == "eQuantic.UI.Primitives" || ns.StartsWith("eQuantic.UI.Primitives.");
-    }
-
     public int Priority => 1; // Lowest priority (fallback)
 }

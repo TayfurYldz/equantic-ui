@@ -2,14 +2,18 @@
  * eQuantic.UI Runtime - Core types and interfaces
  */
 
+/**
+ * What a component IS to this runtime: a subtree it can render, and the children it holds.
+ *
+ * It used to declare nine DOM fields beside those — id, className, style, styleClass, the two
+ * attribute bags — mirrored on the base class and read by `buildAttributes`, which nothing called.
+ * Every component carried them, so every one of those names was a collision waiting for a C#
+ * parameter to be spelled the same (#245): a primary-constructor parameter lowers to a field, and
+ * a field silently overwrote the runtime's own. A page shows nothing different and a value is
+ * gone. They are deleted rather than fenced — the DOM escape hatch (`HtmlElement`) builds its
+ * attributes through `htmlNode` and read none of them.
+ */
 export interface IComponent {
-
-  id?: string;
-  className?: string;
-  style?: Record<string, string>;
-  styleClass?: StyleClass;
-  dataAttributes?: Record<string, string>;
-  ariaAttributes?: Record<string, string>;
   children: IComponent[];
   render(): HtmlNode;
 }
@@ -84,54 +88,8 @@ export type ServiceProvider = {
 /**
  * Base class for all components
  */
-/**
- * TYPE-ONLY, and that is the whole reason it is allowed to point at the vocabulary: `import type`
- * is erased before anything runs, so it adds no edge to the evaluation graph and cannot reopen the
- * cycle the seam below exists to avoid. Dropping the `type` keyword would.
- *
- * It earns its place by making the hierarchy say what C# says — `UiComponent : VisualNode` — so a
- * component is assignable to a VisualNode on this side too. Without it `centered()` answered
- * `unknown`, which is assignable to nothing, and eqc's own `VisualNode x = new SomeComponent()`
- * emitted TypeScript that did not typecheck.
- */
-import type { VisualNode } from '../shared/vocabulary';
-
-/**
- * How a node is CENTRED, registered by the vocabulary at import time. Inverted rather than
- * imported: a static import here would close a module cycle (types → vocabulary → types) at
- * evaluation, and a lazy `require` does not exist in ESM. The vocabulary owns the wrapper's
- * shape; this module only owns the seam.
- */
-type CenterWrapper = (child: unknown) => VisualNode;
-let centerWrapper: CenterWrapper | null = null;
-export function setCenterWrapper(wrapper: CenterWrapper): void {
-  centerWrapper = wrapper;
-}
 
 export abstract class Component implements IComponent {
-  /**
-   * C# twin of `VisualNodeExtensions.Centered()`. It lives on the vocabulary's VisualNode AND
-   * here, because in C# it is an EXTENSION on VisualNode — and a component IS one, so
-   * `Card(…).Centered()` compiles there and called nothing here: the page mounted with
-   * "centered is not a function" and a blank frame. The wrapper is built through the ambient
-   * lowering rather than imported, so this base keeps no dependency on the vocabulary module.
-   */
-  centered(): VisualNode {
-    // No vocabulary registered means nothing to wrap WITH — a client-only mount before the
-    // vocabulary module has evaluated. The node comes back unchanged, which is the same object
-    // the caller already held, so the cast states what is already true of every caller's value.
-    return centerWrapper ? centerWrapper(this) : (this as unknown as VisualNode);
-  }
-
-  id?: string;
-  className?: string;
-  style?: Record<string, string>;
-  styleClass?: StyleClass;
-  title?: string;
-  hidden?: boolean;
-  tabIndex?: number;
-  dataAttributes?: Record<string, string>;
-  ariaAttributes?: Record<string, string>;
   children: IComponent[] = [];
 
   constructor(props?: any) {
@@ -140,25 +98,65 @@ export abstract class Component implements IComponent {
     }
   }
 
+  abstract render(): HtmlNode;
+
+}
+
+type Action<T = void> = (args: T) => void;
+
+/** Where the DOM's event name is not the property name lowercased: the one divergence in the C#
+ * `HtmlElement.EventNameMap` is double-click, which the DOM spells `dblclick` — a listener
+ * registered as "doubleclick" attaches fine and fires never. */
+const EVENT_NAME_EXCEPTIONS: Record<string, string> = {
+  doubleclick: 'dblclick',
+};
+
+/**
+ * The DOM escape hatch's base, and the home of the DOM surface.
+ *
+ * These nine properties, the fourteen `on*` handlers and the two builders that read them used to
+ * sit on `Component`, where every component in the tree paid for them: a C# member of the same name
+ * lowers to the same key and overwrites silently (#245). They are not a component's, and they never
+ * were — the C# side puts them exactly here (`Web/Dom/HtmlElement`), which is the shape this file
+ * should have mirrored from the start.
+ *
+ * They are not dead either, which is the correction: nothing in the RUNTIME calls
+ * `buildAttributes`, but a consumer's own `class MyTag : HtmlElement` does, and eqc lowers
+ * `BuildAttributes()` to `this.buildAttributes()`. Deleting them broke the escape hatch for exactly
+ * the code it exists to serve.
+ */
+export abstract class HtmlElement extends Component {
+  // DECLARE, not a field: a subclass's field declarations run AFTER `super()`, so defining these
+  // here would overwrite whatever `Component`'s constructor just took from `props` — measured, it
+  // turned `buildEvents()` into `{}`. They were plain declarations while they sat on `Component`,
+  // where the constructor runs after that class's own initialisers; one class down, the order
+  // reverses. `declare` emits nothing and keeps the types.
+  declare id?: string;
+  declare className?: string;
+  declare style?: Record<string, string>;
+  declare styleClass?: StyleClass;
+  declare title?: string;
+  declare hidden?: boolean;
+  declare tabIndex?: number;
+  declare dataAttributes?: Record<string, string>;
+  declare ariaAttributes?: Record<string, string>;
   // Common Events
-  onClick?: Action;
-  onDoubleClick?: Action;
-  onFocus?: Action;
-  onBlur?: Action;
-  onMouseEnter?: Action<any>;
-  onMouseLeave?: Action<any>;
-  onMouseDown?: Action<any>;
-  onMouseUp?: Action<any>;
-  onKeyDown?: Action<any>;
-  onKeyUp?: Action<any>;
-  onKeyPress?: Action<any>;
-  onChange?: Action<any>;
-  onInput?: Action<any>;
+  declare onClick?: Action;
+  declare onDoubleClick?: Action;
+  declare onFocus?: Action;
+  declare onBlur?: Action;
+  declare onMouseEnter?: Action<any>;
+  declare onMouseLeave?: Action<any>;
+  declare onMouseDown?: Action<any>;
+  declare onMouseUp?: Action<any>;
+  declare onKeyDown?: Action<any>;
+  declare onKeyUp?: Action<any>;
+  declare onKeyPress?: Action<any>;
+  declare onChange?: Action<any>;
+  declare onInput?: Action<any>;
   // A transpiled component may DECLARE one of these with the null its C# signature carries — the
   // transpiled world produces null wherever C# produced null — so the base accepts null too.
-  onSubmit?: Action<any> | null;
-
-  abstract render(): HtmlNode;
+  declare onSubmit?: Action<any> | null;
 
   protected buildAttributes(): Record<string, string | undefined> {
     const attrs: Record<string, string | undefined> = {};
@@ -233,18 +231,7 @@ export abstract class Component implements IComponent {
 
     return events;
   }
-}
 
-type Action<T = void> = (args: T) => void;
-
-/** Where the DOM's event name is not the property name lowercased: the one divergence in the C#
- * `HtmlElement.EventNameMap` is double-click, which the DOM spells `dblclick` — a listener
- * registered as "doubleclick" attaches fine and fires never. */
-const EVENT_NAME_EXCEPTIONS: Record<string, string> = {
-  doubleclick: 'dblclick',
-};
-
-export abstract class HtmlElement extends Component {
   protected get htmlNode() {
     return {
       text: (content: string) => {

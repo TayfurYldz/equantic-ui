@@ -1,8 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { Component, type EventHandler, type HtmlNode } from './types';
+import { HtmlElement, type EventHandler, type HtmlNode } from './types';
 
-/** Concrete probe that exposes the protected buildEvents() for assertions. */
-class Probe extends Component {
+/**
+ * Concrete probe that exposes the protected buildEvents() for assertions — on `HtmlElement`,
+ * which is where the DOM surface lives. It hung off `Component` before #245, where every
+ * component in the tree paid for it; the behaviour is unchanged and the base is not.
+ */
+class Probe extends HtmlElement {
   render(): HtmlNode {
     return { tag: 'div', attributes: {}, events: this.events(), children: [] };
   }
@@ -11,7 +15,7 @@ class Probe extends Component {
   }
 }
 
-describe('Component.buildEvents', () => {
+describe('HtmlElement.buildEvents', () => {
   it('discovers native on* handlers (onClick -> click)', () => {
     const fn = () => {};
     const p = new Probe({ onClick: fn });
@@ -44,5 +48,28 @@ describe('Component.buildEvents', () => {
   it('ignores non-function custom entries', () => {
     const p = new Probe({ customEvents: { click: undefined as unknown as EventHandler } });
     expect(p.events()).toEqual({});
+  });
+
+  /**
+   * WHAT THE ESCAPE HATCH INHERITS, and why deleting it broke code no test in this repo runs.
+   *
+   * `buildAttributes` and `buildEvents` have no caller in the RUNTIME — which is true, and was the
+   * reason #245 deleted them. A consumer's own `class MyTag : HtmlElement` is the caller, and eqc
+   * lowers its `BuildAttributes()` to `this.buildAttributes()`:
+   *
+   * ```js
+   * export class MyTag extends HtmlElement {
+   *     render() { let a = this.buildAttributes(); let e = this.buildEvents(); … }
+   * }
+   * ```
+   *
+   * So the base a consumer extends has to carry both. That is `HtmlElement`, not `Component`: a
+   * component carries none of this, which is the whole of #245, and the C# side already puts the DOM
+   * surface exactly here.
+   */
+  it('gives a subclass the two builders eqc emits calls to', () => {
+    const probe = new Probe() as unknown as Record<string, unknown>;
+    expect(typeof probe['buildAttributes']).toBe('function');
+    expect(typeof probe['buildEvents']).toBe('function');
   });
 });
