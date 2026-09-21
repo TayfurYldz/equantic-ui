@@ -153,10 +153,14 @@ internal sealed partial class WebLoweringVisitor
             element.RawAttributes["aria-valuenow"] = TokenCss.Number(value.Now);
             element.RawAttributes["aria-valuemin"] = TokenCss.Number(value.Min);
             element.RawAttributes["aria-valuemax"] = TokenCss.Number(value.Max);
-            // Only when the caller gave words: aria-valuetext REPLACES the number for a reader, so
-            // echoing the number into it would trade a value for the same value and lose nothing but
-            // the chance to say "40%".
-            if (value.Text is { Length: > 0 } spoken) element.RawAttributes["aria-valuetext"] = spoken;
+            // INSIDE the gate, unlike the Progress arm below, and the asymmetry is the point.
+            // aria-valuetext REPLACES the number for a reader — on a bar that legitimately has no
+            // number (indeterminate) the words are all there is, but an Adjustable with no value is
+            // a TABLIST or a RADIOGROUP, which resolves to a role that reports no range at all.
+            // Words there would describe a value the host never claims to have, and the native
+            // visitor agrees: it announces neither unless the role is Slider.
+            if (adjustable.ValueText is { Length: > 0 } spoken)
+                element.RawAttributes["aria-valuetext"] = spoken;
         }
         if (Lower(adjustable.Child, null) is { } child) element.Children.Add(child);
         return element;
@@ -201,8 +205,13 @@ internal sealed partial class WebLoweringVisitor
             element.RawAttributes["aria-valuenow"] = TokenCss.Number(value.Now);
             element.RawAttributes["aria-valuemin"] = TokenCss.Number(value.Min);
             element.RawAttributes["aria-valuemax"] = TokenCss.Number(value.Max);
-            if (value.Text is { Length: > 0 } spoken) element.RawAttributes["aria-valuetext"] = spoken;
         }
+        // An INDETERMINATE bar has no aria-valuenow and may still have words — and that is the case
+        // where they matter most, because there is no number for a reader to fall back on. They used
+        // to be read from inside the value, so "Estimating time remaining" was dropped exactly when
+        // it was the only thing the bar could say (#243).
+        if (progress.ValueText is { Length: > 0 } spoken)
+            element.RawAttributes["aria-valuetext"] = spoken;
         if (Lower(progress.Child, null) is { } child) element.Children.Add(child);
         return element;
     }
