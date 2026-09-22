@@ -11,6 +11,7 @@
  *   class string per element; only custom-property tails stay inline.
  */
 
+import { adoptServerStateFor, nextComponentKey, runLoweringWalk } from '../core/component';
 import { assertNever } from '../utils/assert-never';
 import { round as dotnetRound } from '../utils/dotnet-math';
 import { PINNED_MARKER } from './markers';
@@ -142,13 +143,18 @@ export function lowerVisualNode(node: VisualNodeValue, context: LoweringContext)
   // Inside a reconciler pass each lowered root takes a unique, order-stable prefix so several
   // bridges on one page cannot collide on identity paths; outside a pass paths are inert.
   const rootPath = getActivePass()?.store.nextRootPath() ?? 'r';
-  return (
-    lowerNode(node, context, null, rootPath) ?? {
-      tag: 'span',
-      attributes: {},
-      events: {},
-      children: [],
-    }
+  // THE SERVER-DATA WALK, around the whole tree: inside a page render this joins the one the root
+  // opened, and standing alone — a Core page's bridge to a write-once subtree reaches here with no
+  // root render of its own — it opens one, so the components below are named from `#0` on every
+  // render rather than counting on from the last.
+  return runLoweringWalk(
+    () =>
+      lowerNode(node, context, null, rootPath) ?? {
+        tag: 'span',
+        attributes: {},
+        events: {},
+        children: [],
+      },
   );
 }
 
@@ -334,6 +340,11 @@ function lowerNodeKind(
   // which is the truth about these objects, rather than for a case the union does not have.
   const foreign = node as { nodeKind?: string; render?: () => HtmlNode };
   if (foreign.nodeKind === undefined) {
+    // NOTHING TO SAY ABOUT THE WALK. A write-once StatelessComponent twin declares no `nodeKind`
+    // (only StatefulComponent does) so it arrives here rather than in the switch, and its own
+    // render() takes its key — the same key the C# realizer consumed by entering it. An
+    // HtmlElement arriving here has no such render and takes none, which is right: the realizer
+    // does not enter one either.
     return typeof foreign.render === 'function' ? foreign.render() : null;
   }
 
@@ -444,6 +455,16 @@ function lowerNodeKind(
       const resolved = (
         pass ? pass.store.reconcile(path, node, pass.invalidator) : node
       ) as ComponentNode;
+      // SERVER DATA FOR THIS COMPONENT, before it builds — the twin of the C# realizer naming each
+      // component as it expands it. A component the page composes may declare IServerPrefetch, and
+      // what the server loaded for it arrives keyed by the same `Type#ordinal` both sides count. It
+      // has to land before `build`, or the build reads the field defaults and the value the server
+      // drew blanks in front of the reader.
+      adoptServerStateFor(
+        resolved,
+        nextComponentKey((resolved as { constructor?: { name?: string } }).constructor?.name ?? ''),
+      );
+
       // The BOUNDARY (C# ComponentBoundary twin): a component's throw costs its own subtree and
       // nothing else. Without this the mount threw, nothing reached the root, and the page was white.
       let built: unknown;
@@ -3235,6 +3256,15 @@ function resolveStackChild(
     const resolved = (
       pass ? pass.store.reconcile(path, node, pass.invalidator) : node
     ) as ComponentNode;
+    // NAMED HERE TOO, matching the C# stack path. A stack resolves a component child itself — it
+    // has to know whether what the child builds is a `Positioned` before it can place it — so the
+    // ordinary component branch above never runs for it. Without this the client would not consume
+    // the key the server just wrote for it, and the two walks would count differently from here on.
+    adoptServerStateFor(
+      resolved,
+      nextComponentKey((resolved as { constructor?: { name?: string } }).constructor?.name ?? ''),
+    );
+
     try {
       node = resolved.build(context.componentContext) as VisualNodeValue;
     } catch (error) {

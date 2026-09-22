@@ -1323,11 +1323,20 @@ export class PreviewPanel {
         return;
       }
       // What the outgoing page held, re-entering through the SAME door the SSR handoff uses
-      // (__INITIAL_STATE__ -> adoptServerState / the stateful page's own merge). Guarded by class
-      // name the way the boot guards by URL: a renamed page must start fresh, not inherit fields
-      // from a stranger that happens to spell them the same.
+      // (__INITIAL_STATE__ -> the walk that names each component -> the stateful page's own merge).
+      // Guarded by class name the way the boot guards by URL: a renamed page must start fresh, not
+      // inherit fields from a stranger that happens to spell them the same.
+      //
+      // UNDER THE ROOT'S KEY, because that door is keyed by component now: a field map per
+      // component, named Type#ordinal in expansion order, and the root is the first one named.
+      // A flat map is what this used to write, and after the change nothing read it — the carry
+      // stopped working silently, which is the one way a preview feature fails unnoticed.
+      // (No backticks in here: this whole script is a template literal, and one closes it — which
+      // is exactly what an earlier version of this comment did, and tsc said so. What tsc cannot
+      // see is the script INSIDE the string; scripts/verify-webview.mjs is what reads that, and
+      // its own header names the stray backtick as the first thing it exists to catch.)
       const carried = mountedClass === payload.className ? captureState() : null;
-      if (carried) window.__INITIAL_STATE__ = carried;
+      if (carried) window.__INITIAL_STATE__ = { [payload.className + '#0']: carried };
 
       app.replaceChildren();
       mountedInstance = new Component();

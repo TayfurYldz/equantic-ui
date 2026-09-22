@@ -80,12 +80,15 @@ export async function boot(): Promise<void> {
       if (saved) {
         sessionStorage.removeItem('__eq_hmr__');
         hmrReplay = true;
-        const parsed = JSON.parse(saved) as { url: string; state: Record<string, unknown> };
+        const parsed = JSON.parse(saved) as {
+          url: string;
+          state: Record<string, Record<string, unknown>>;
+        };
         if (parsed.url === location.href) {
-          (window as unknown as { __INITIAL_STATE__?: object }).__INITIAL_STATE__ = {
-            ...((window as unknown as { __INITIAL_STATE__?: object }).__INITIAL_STATE__ ?? {}),
-            ...parsed.state,
+          const w = window as unknown as {
+            __INITIAL_STATE__?: Record<string, Record<string, unknown>>;
           };
+          w.__INITIAL_STATE__ = { ...(w.__INITIAL_STATE__ ?? {}), ...parsed.state };
         }
       }
     } catch {
@@ -421,7 +424,12 @@ async function navigateToPage(
 interface PageStatePayload {
   title?: string;
   head?: string;
-  state?: Record<string, unknown>;
+  /**
+   * One field map PER COMPONENT, under the name the server's realizer gave it (`Type#ordinal`).
+   * It was a flat field map while only a page root could prefetch; the extra level is what lets
+   * two components holding a field of the same name keep their own values.
+   */
+  state?: Record<string, Record<string, unknown>>;
 }
 
 /**
@@ -478,12 +486,18 @@ async function fetchPageState(url?: string): Promise<PageStatePayload | null> {
  * the SSR-rendered tags of the FIRST page be replaced rather than duplicated.
  */
 function applyPageState(payload: PageStatePayload | null): void {
-  if (!payload) return;
-
-  if (payload.state && typeof payload.state === 'object') {
-    (window as unknown as { __INITIAL_STATE__?: Record<string, unknown> }).__INITIAL_STATE__ =
-      payload.state;
+  // REPLACED, INCLUDING WITH NOTHING. The payload used to be deleted by whoever read it, so a
+  // navigation to a page that prefetches nothing simply found none. It is per-component now and
+  // nobody consumes it, so leaving the previous page's entries in place would let A → B → A hydrate
+  // A from state the server never sent for that visit.
+  const w = window as unknown as { __INITIAL_STATE__?: Record<string, Record<string, unknown>> };
+  if (payload?.state && typeof payload.state === 'object') {
+    w.__INITIAL_STATE__ = payload.state;
+  } else {
+    delete w.__INITIAL_STATE__;
   }
+
+  if (!payload) return;
   if (typeof payload.title === 'string' && payload.title.length > 0) {
     document.title = payload.title;
   }
@@ -660,7 +674,14 @@ function initHotReload(): void {
         /* reload without state rather than not at all */
       }
       try {
-        sessionStorage.setItem('__eq_hmr__', JSON.stringify({ url: location.href, state: data }));
+        // UNDER THE ROOT'S KEY, because __INITIAL_STATE__ is keyed by component now: any component
+        // the page composes may declare server data, so a flat map cannot say whose field is whose.
+        // The captured bag is the root page's, and the root is the first component expanded — `#0`.
+        const rootKey = `${(currentComponent as { constructor?: { name?: string } } | null)?.constructor?.name ?? ''}#0`;
+        sessionStorage.setItem(
+          '__eq_hmr__',
+          JSON.stringify({ url: location.href, state: { [rootKey]: data } }),
+        );
       } catch {
         /* private mode etc. — the reload still shows the new code, only via hydration */
       }

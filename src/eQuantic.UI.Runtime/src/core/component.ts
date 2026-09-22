@@ -31,18 +31,163 @@ import { scheduleRenderFlush } from './render-scheduler';
  */
 /**
  * SERVER DATA (the C# `IServerPrefetch` twin): the fields the server's prefetch filled arrive as
- * `window.__INITIAL_STATE__`, keyed by the SAME field names the page declares, and land BEFORE its
- * first render — so the client's first tree is the one the server already wrote as HTML and
- * hydration matches instead of flashing the field defaults. Consumed once: the payload is a
- * single-render handoff, not a store.
+ * `window.__INITIAL_STATE__` — one field map PER COMPONENT, under the name the server's realizer
+ * gave it (`Type#ordinal`), each landing BEFORE that component builds, so the client's first tree is
+ * the one the server already wrote as HTML and hydration matches instead of flashing the field
+ * defaults. Inside a component's entry the keys are the field names it declares.
+ *
+ * NOT consumed once, which the flat single-owner payload was: it stays for the life of the document
+ * because the walk below runs on EVERY render of the root, and a page composing three prefetchers
+ * would otherwise have had the first one swallow the payload for the other two. What stops it being
+ * re-applied is the root adopting only while unmounted, not the entry going away.
  *
  * Shared by both write-once page bases (stateless and stateful pages prefetch identically).
  */
-export function adoptServerState(target: object): void {
-  if (typeof window === 'undefined') return;
-  const w = window as unknown as { __INITIAL_STATE__?: Record<string, unknown> };
-  const payload = w.__INITIAL_STATE__;
-  if (!payload) return;
+const componentOrdinals = new Map<string, number>();
+
+/**
+ * The name the server gave this component: `Type#ordinal` in depth-first expansion order.
+ *
+ * BOTH SIDES COUNT, and that is the whole identity mechanism. The client does not receive
+ * components — it re-runs `build()` and constructs fresh ones — so the payload has to say which
+ * component each field map belongs to. The server names them as the realizer expands them
+ * (`ComponentExpansionScope`), and the same walk here produces the same names.
+ *
+ * The type name comes from `constructor.name`, which survives because neither bundler passes
+ * `--minify-identifiers` (only `--minify-syntax --minify-whitespace`). Adding it would rename the
+ * classes and every key would stop matching — quietly, since a key that matches nothing leaves the
+ * component with its own defaults. Pinned by `server-state.spec.ts`.
+ */
+export function nextComponentKey(typeName: string): string {
+  const seen = componentOrdinals.get(typeName) ?? 0;
+  componentOrdinals.set(typeName, seen + 1);
+  return `${typeName}#${seen}`;
+}
+
+/** Starts a fresh count — one render is one walk, and the numbering restarts with it. */
+export function resetComponentKeys(): void {
+  componentOrdinals.clear();
+}
+
+/**
+ * Hands a component the fields the server loaded FOR IT, by key. Returns whether anything landed.
+ *
+ * The type half of the key is what makes a drift safe: if the two sides ever expand different
+ * trees, the ordinal alone would hand a component whatever sat at that number. Matching on the type
+ * means a disagreement leaves the component with its own defaults — a missing value rather than a
+ * wrong one.
+ *
+ * It is `constructor.name`, the SIMPLE name, so two components called `Row` from different
+ * namespaces share the refusal as well as the ordinal. Both sides still count them identically, so
+ * trees that agree are keyed correctly; what a collision costs is the net, not the protocol. The
+ * C# side says the same at `ComponentExpansionScope`.
+ */
+const alreadyAdopted = new WeakSet<object>();
+
+export function adoptServerStateFor(target: object, key: string): boolean {
+  if (typeof window === 'undefined') return false;
+
+  // ONCE PER INSTANCE, and the payload staying is exactly why this is needed. The lowering resolves
+  // a stateful child against the instance store and gets the SAME object back on every pass, so
+  // every re-render of anything above it wrote the server's original fields over whatever the
+  // reader had changed — a filter that reset itself each time the page redrew. A fresh instance is
+  // a different object and still restores. The root has said this since the first version, as
+  // `adopt: !this._mounted`; this is the same rule for everything below it.
+  if (alreadyAdopted.has(target)) return false;
+
+  const w = window as unknown as {
+    __INITIAL_STATE__?: Record<string, Record<string, unknown>>;
+  };
+  const payload = w.__INITIAL_STATE__?.[key];
+  if (!payload) return false;
+
+  alreadyAdopted.add(target);
+  return applyServerFields(target, payload);
+}
+
+/**
+ * How deep in the walk this render is. Zero means nothing is in progress, so the next thing to run
+ * owns the count and restarts it.
+ *
+ * THE WALK IS BRACKETED rather than marked, and that is worth stating because three separate
+ * markers were tried first and each was a guess made at a call site. `render()` is one method and
+ * everything reaches it — a page root, the component a `build()` returned, a component the lowering
+ * met at its mixing seam — so whether a call OWNS the count is a property of when it is called,
+ * which only a bracket can answer.
+ *
+ * What is NOT a property of when it is called is whether the component gets a key. It always does,
+ * because the server's realizer enters every `UiComponent` it expands and these classes are that
+ * twin; a Core element transpiles to `HtmlElement` and never reaches this file. Reading one of
+ * those questions off the other is what produced the markers.
+ */
+let walkDepth = 0;
+
+/**
+ * Opens the walk around ONE lowering, and NAMES NOTHING: a lowering is not a component.
+ *
+ * Every lowering goes through `lowerVisualNode`, so this is where an outermost one restarts the
+ * count. A Core page's bridge to a write-once subtree reaches the lowering with no component render
+ * of its own, and nothing else would restart it — the same child was named `Type#0` on one render
+ * and `Type#1` on the next, so every render after the first left it with its defaults.
+ *
+ * Around the whole lowering rather than around each component inside it, which is the difference
+ * that makes this its own function: restarting per component would restart the count between two
+ * SIBLINGS and hand both of them `#0`.
+ *
+ * WHAT THIS CANNOT SEE is a page whose render is not a component's. The server counts one page
+ * render, and two sibling bridges inside one of those continue one count; here they would be two
+ * outermost lowerings and each would restart. It needs a Core page rendering in the browser, and
+ * there is no such thing today — `mount`, `hydrate` and `mountReconcile` are declared on
+ * `StatelessComponent` and `StatefulComponent` only, so an escape-hatch page (an `HtmlElement`)
+ * is served by SSR and never mounted by the boot script. Inside a write-once page the bridges are
+ * already nested in the root's own walk and share its count, which is why this is a gap in the
+ * client half of that page shape rather than in the count: issue #279.
+ */
+export function runLoweringWalk<T>(run: () => T): T {
+  if (walkDepth === 0) resetComponentKeys();
+
+  walkDepth++;
+  try {
+    return run();
+  } finally {
+    walkDepth--;
+  }
+}
+
+/**
+ * Runs ONE component's render inside the walk: it takes its key, adopts what the server loaded for
+ * it while it is unmounted, and restarts the count first if nothing else is in progress.
+ *
+ * EVERY RENDER, not only the first. The count lives across renders, and a root that re-rendered
+ * without restarting it handed the components below `Type#1`, `Type#2`, … — keys the payload does
+ * not name — so a composed component silently reverted to its defaults on the second pass.
+ *
+ * `adopt` is false once the root is mounted: the payload is the first render's answer, and applying
+ * it again would undo whatever the page has done since. The key is taken either way, or everything
+ * after it shifts by one on exactly the renders where adoption is off.
+ */
+export function runComponentWalk<T>(root: object, adopt: boolean, run: () => T): T {
+  // THE OUTERMOST RENDER RESTARTS THE COUNT, and only that one: a render inside a walk joins it,
+  // because the count it would have restarted belongs to the root above.
+  if (walkDepth === 0) resetComponentKeys();
+
+  // EVERY COMPONENT CONSUMES ITS KEY, nested or not, adopting or not. The realizer enters every
+  // `UiComponent` it expands and these classes ARE that twin — a Core element transpiles to
+  // `HtmlElement` and never arrives here — so a component that took no ordinal here would shift
+  // every one after it. Not adopting is a separate question: the payload is the first render's
+  // answer, and applying it again would undo whatever the page has done since.
+  const key = nextComponentKey((root.constructor as { name?: string }).name ?? '');
+  if (adopt) adoptServerStateFor(root, key);
+
+  walkDepth++;
+  try {
+    return run();
+  } finally {
+    walkDepth--;
+  }
+}
+
+function applyServerFields(target: object, payload: Record<string, unknown>): boolean {
   const self = target as Record<string, unknown>;
   // The class's TYPED boundary: the compiler emits `static $hydration` naming every field whose
   // wire form differs from its runtime type. A spec'd field is coerced by what it IS; the rest
@@ -57,9 +202,10 @@ export function adoptServerState(target: object): void {
     self[key] = spec !== undefined ? hydrate(payload[key], spec) : hydrateValue(self[key], payload[key]);
     adopted = true;
   }
-  // Leave the payload for its real owner when nothing here matched — a Core page reads it from its
-  // own state object, and a shared component rendering first must not swallow it.
-  if (adopted) delete w.__INITIAL_STATE__;
+  // NOT DELETED once read, which the flat payload did: it was a single-render handoff to one owner,
+  // and there is now one entry per component. A page composing three prefetchers would have had the
+  // first one swallow the whole payload for the other two.
+  return adopted;
 }
 
 export abstract class StatelessComponent extends Component {
@@ -95,23 +241,28 @@ export abstract class StatelessComponent extends Component {
       measureText: measurePhotonText,
       monoAdvance: photonMonoAdvance,
     };
-    if (!this._mounted) adoptServerState(this);
-    // Reconciler pass (W6): a stateless page IS re-renderable — build is pure and the instance
-    // store retains nested shared stateful across passes — so those children invalidate by
-    // re-rendering this page, exactly like a stateful host. (The old "no invalidator" fence made
-    // every stateful child of a stateless page render-once: the site's mega menu opened its state
-    // and nothing on screen ever changed.)
-    enterPass(this._instances, () => this._scheduleRender());
-    try {
-      const component = reconcileBuildRoot(this.build(context)) as Component;
-      return component.render();
-    } catch (error) {
-      // A PAGE has no parent to contain it. Its own throw used to leave the root unwritten, which
-      // is the white screen the boundary exists to end.
-      return renderComponentFailure(this.constructor.name, error);
-    } finally {
-      exitPass();
-    }
+    // AROUND THE WHOLE RENDER, because what `build()` returns is rendered through this same method:
+    // outside the walk that child would restart the count and claim `#0` for itself, which for a
+    // component that builds another of its own type gave every level of a recursive tree the ROOT's
+    // data.
+    return runComponentWalk(this, !this._mounted, () => {
+      // Reconciler pass (W6): a stateless page IS re-renderable — build is pure and the instance
+      // store retains nested shared stateful across passes — so those children invalidate by
+      // re-rendering this page, exactly like a stateful host. (The old "no invalidator" fence made
+      // every stateful child of a stateless page render-once: the site's mega menu opened its state
+      // and nothing on screen ever changed.)
+      enterPass(this._instances, () => this._scheduleRender());
+      try {
+        const component = reconcileBuildRoot(this.build(context)) as Component;
+        return component.render();
+      } catch (error) {
+        // A PAGE has no parent to contain it. Its own throw used to leave the root unwritten, which
+        // is the white screen the boundary exists to end.
+        return renderComponentFailure(this.constructor.name, error);
+      } finally {
+        exitPass();
+      }
+    });
   }
 
   _scheduleRender(): void {
@@ -294,18 +445,20 @@ export abstract class StatefulComponent extends Component {
       measureText: measurePhotonText,
       monoAdvance: photonMonoAdvance,
     };
-    if (!this._mounted) adoptServerState(this);
-    // Reconciler pass (W6 slice 2): as a page root this component persists by itself; its store
-    // retains the nested shared stateful its build creates. When hosted inside another page's
-    // render this JOINS the outer pass instead (the host page owns retention).
-    enterPass(this._instances, () => this._scheduleRender());
-    try {
-      return (reconcileBuildRoot(this.build(context)) as Component).render();
-    } catch (error) {
-      return renderComponentFailure(this.constructor.name, error);
-    } finally {
-      exitPass();
-    }
+    // AROUND THE WHOLE RENDER, for the reason the stateless root states.
+    return runComponentWalk(this, !this._mounted, () => {
+      // Reconciler pass (W6 slice 2): as a page root this component persists by itself; its store
+      // retains the nested shared stateful its build creates. When hosted inside another page's
+      // render this JOINS the outer pass instead (the host page owns retention).
+      enterPass(this._instances, () => this._scheduleRender());
+      try {
+        return (reconcileBuildRoot(this.build(context)) as Component).render();
+      } catch (error) {
+        return renderComponentFailure(this.constructor.name, error);
+      } finally {
+        exitPass();
+      }
+    });
   }
 
   mount(container: HTMLElement): void {

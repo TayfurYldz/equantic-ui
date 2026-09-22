@@ -1,15 +1,43 @@
 namespace eQuantic.UI.Primitives;
 
 /// <summary>
-/// SERVER DATA for the first render: a page (or any component the page composes) declares the data
-/// it needs, the SSR pipeline awaits it BEFORE building the tree, and the values the prefetch stores
-/// travel to the browser so hydration sees exactly what the server rendered — the markup carries
-/// real numbers for crawlers and the client never flashes an empty state.
+/// SERVER DATA for the first render: a page — or any component the page composes — declares the
+/// data it needs, the SSR pipeline awaits it BEFORE drawing the tree, and the values the prefetch
+/// stores travel to the browser so hydration sees exactly what the server rendered — the markup
+/// carries real numbers for crawlers and the client never flashes an empty state.
+/// <para>
+/// ANY COMPONENT, and that sentence used to be a promise the pipeline did not keep. Only the root of
+/// the route was asked and only its fields travelled, so a header composed into every route drew the
+/// right value during SSR and blanked the moment hydration rebuilt it — `curl` returned perfect
+/// HTML and only a browser showed the loss. The traversal below is what makes the sentence true.
+/// </para>
+/// <para>
+/// HOW IT REACHES YOU: the drawing is the discovery — it names every component it expands — and the
+/// prefetches it found are then awaited ONE AT A TIME, because they are all handed the request's
+/// service provider and a scoped dependency (an EF DbContext, the ordinary case) is not safe for two
+/// of them at once. The drawing runs again with the values restored, and repeats while it keeps
+/// finding components it has not asked: a page that loads a list and then composes one component per
+/// row creates prefetchers that did not exist when the first round looked.
+/// </para>
+/// <para>
+/// The payload names each component <c>Type#ordinal</c> in that expansion order, and the client
+/// counts the same way as it builds, so each component is handed back its own fields. A tree that
+/// somehow differs between the two sides leaves a component with its DEFAULTS rather than another
+/// component's data: the type in the key has to match before anything is written — by simple name,
+/// so two components called <c>Row</c> from different namespaces share that refusal as well as
+/// their ordinal. A component the
+/// DATA replaced — your page loads, and composes a different row at the same position — is
+/// recognised as a different component and asked for its own data rather than handed the previous
+/// one's, as long as what distinguishes the two is a field this can compare: a string, a number, an
+/// enum, any value type. Two rows told apart only by an object you pass them cannot be distinguished
+/// here, so give such a component something comparable if its position is data-driven.
+/// </para>
 /// <para>
 /// The implementation is SERVER-ONLY: mark it <c>[ServerOnly]</c> so the transpiler omits it from
 /// the client bundle, and it may use the whole server surface (HttpClient, EF, the request's
-/// services). Store results in ordinary FIELDS — those are what the hydration payload carries, keyed
-/// by field name, into the identical fields of the transpiled twin.
+/// services). Store results in ordinary FIELDS — those are what the hydration payload carries, by
+/// field name within the component's entry, into the identical fields of the transpiled twin. A
+/// field declared on a BASE class travels too, private ones included.
 /// </para>
 /// <example>
 /// <code>

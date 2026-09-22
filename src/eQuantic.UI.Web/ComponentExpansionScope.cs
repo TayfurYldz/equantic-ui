@@ -1,0 +1,292 @@
+using System.Reflection;
+using eQuantic.UI.Primitives;
+
+namespace eQuantic.UI.Web;
+
+/// <summary>
+/// NAMES EVERY COMPONENT THE PAGE EXPANDS, so server data loaded for one of them can be handed back
+/// to the same one on the client.
+///
+/// <para>
+/// Only the root of a route used to prefetch, and only the root's fields travelled — a component
+/// the page merely composed had <c>PrefetchAsync</c> called never. Fixing that needs an identity
+/// that survives the SSR/hydration boundary, because the client does not receive components: it
+/// re-runs <c>build()</c> and constructs fresh ones. The payload has to say WHICH component each
+/// field map belongs to.
+/// </para>
+///
+/// <para>
+/// THE NAME IS <c>Type#ordinal</c> in depth-first expansion order, and the alternative is worth
+/// stating because it was the first design. <c>lowering.ts</c> already carries a structural
+/// <c>path</c> (<c>r/0/0</c>) for Photon's retained store, and the matching key would have been
+/// that path — except the C# web realizer has no path at all, and threading one through every visit
+/// is a large mechanical change across a file family whose output is pinned byte for byte. The
+/// ordinal is the same guarantee for less: both sides expand the same tree in the same order, so
+/// both count the same.
+/// </para>
+///
+/// <para>
+/// THE TYPE NAME IS NOT DECORATION — it is what makes a drift safe. If the two sides ever expand
+/// different trees, an ordinal alone would hand a component the state of whatever happened to sit
+/// at that number; carrying the type means the client can refuse a key whose type disagrees and
+/// leave the component with its own defaults, which is a missing value rather than a wrong one.
+/// </para>
+///
+/// <para>
+/// It is the SIMPLE name, and that bounds the guarantee rather than the protocol. Two components
+/// named <c>Row</c> from different namespaces count on one ordinal and both sides count it the
+/// same way, so an agreeing pair of trees is keyed correctly either way — what a collision costs
+/// is the refusal above, which is the net for a drift that should not happen in the first place.
+/// Inside one app the generator already reports it (EQ3102, for the factory surface); an app type
+/// colliding with a framework one is unreported, and an exact identity needs a stable id emitted
+/// for every component by the transpiler and read by both sides — which moves the key format for
+/// every component, so it is issue #278 rather than a line here.
+/// </para>
+/// </summary>
+public sealed class ComponentExpansionScope
+{
+    private static readonly System.Threading.AsyncLocal<ComponentExpansionScope?> Current = new();
+
+    private readonly Dictionary<string, int> _ordinals = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, UiComponent> _expanded = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _replaced = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The render-scoped ambient scope, armed by the SSR pipeline around an expansion and null
+    /// everywhere else — the same shape <see cref="StyleSink.Ambient"/> uses, and for the same
+    /// reason: a component deep in the tree contributes to one per-page collection without every
+    /// visit signature growing a parameter.
+    /// </summary>
+    public static ComponentExpansionScope? Ambient
+    {
+        get => Current.Value;
+        set => Current.Value = value;
+    }
+
+    /// <summary>What each key LOADED in an earlier round, to be put back as that component is
+    /// reached again. The server's discovery loop fills this, because a rebuild constructs new
+    /// instances and the values a prefetch loaded live on the old ones.</summary>
+    public IReadOnlyDictionary<string, LoadedComponentState> Restore { get; init; }
+        = new Dictionary<string, LoadedComponentState>(StringComparer.Ordinal);
+
+    /// <summary>Every component reached this round, in expansion order.</summary>
+    public IReadOnlyDictionary<string, UiComponent> Expanded => _expanded;
+
+    /// <summary>
+    /// Keys whose component this round is NOT the one that loaded under them — a data-driven page
+    /// replaced it. What loaded belongs to nobody, so nothing was restored and the caller asks the
+    /// new component for its own data instead of drawing another one's.
+    /// </summary>
+    public IReadOnlySet<string> Replaced => _replaced;
+
+    /// <summary>
+    /// A key taken OUTSIDE this walk, which the walk must not hand out again.
+    ///
+    /// <para>
+    /// An escape-hatch root is asked directly — it never passes through the realizer's component
+    /// visit — so its key is built by hand while this count starts empty. A component sharing the
+    /// root's simple name then claimed the same one, and the pipeline's asked set read it as
+    /// already handled: that component's prefetch never ran and its state never shipped, with the
+    /// payload under that name belonging to the root. The two sides agree on the wrong thing, so
+    /// the type check has nothing to refuse.
+    /// </para>
+    /// </summary>
+    public string? Reserved { get; init; }
+
+    /// <summary>
+    /// A component's fields AS THEY ARE — raw CLR values under raw field names, nulls included.
+    ///
+    /// <para>
+    /// Deliberately NOT the payload's snapshot, and the difference cost a round. The payload is a
+    /// WIRE form: it renames an auto-property's backing field to the property, writes an enum as the
+    /// camelCase string the client expects, and drops nulls so one unwritable value cannot empty the
+    /// page. Every one of those is wrong for restoring a value onto a fresh C# instance — the
+    /// property name matches no field, the string is not assignable to the enum, and a prefetch that
+    /// CLEARED a non-null default would silently keep the default. Round-to-round restoration reads
+    /// this; only the response is normalized.
+    /// </para>
+    /// </summary>
+    public static IReadOnlyDictionary<string, object?> Capture(UiComponent component)
+    {
+        var captured = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var field in FieldsOf(component.GetType()))
+        {
+            // A CALLBACK IS CONFIGURATION, and putting one back is worse than carrying one: the
+            // next round's component would draw through the PREVIOUS instance's closure, still
+            // holding whatever that round captured. The payload drops handlers for the matching
+            // reason — the client builds its own — and nothing here could notice the substitution,
+            // since a delegate is not a value this can compare.
+            if (typeof(Delegate).IsAssignableFrom(field.FieldType)) continue;
+
+            var value = field.GetValue(component);
+            if (value is Delegate) continue;
+
+            captured[field.Name] = value;
+        }
+        return captured;
+    }
+
+    /// <summary>
+    /// Names a component the realizer is about to expand and restores anything already loaded for
+    /// it — BEFORE its <c>Build</c> runs, which is the whole point of hooking the expansion rather
+    /// than the render.
+    /// </summary>
+    public string Enter(UiComponent component)
+    {
+        var typeName = component.GetType().Name;
+        var ordinal = _ordinals.TryGetValue(typeName, out var seen) ? seen : 0;
+        var key = $"{typeName}#{ordinal}";
+
+        // Taken before the walk began — step past it rather than hand it out twice. Only the first
+        // component of a type can reach this, since the reserved key is always that type's #0.
+        if (key == Reserved)
+        {
+            ordinal++;
+            key = $"{typeName}#{ordinal}";
+        }
+
+        _ordinals[typeName] = ordinal + 1;
+        _expanded[key] = component;
+
+        if (!Restore.TryGetValue(key, out var loaded)) return key;
+
+        // THE VERY INSTANCE that loaded. A page root is the same object every round — it already
+        // holds what it loaded, and writing the values back would undo anything it has done since.
+        // Recognising it by reference is also what stops it being read as a replacement below: its
+        // fields no longer match how it was built, because its own prefetch changed them.
+        if (ReferenceEquals(loaded.Loaded, component)) return key;
+
+        // A DIFFERENT COMPONENT ON THE SAME KEY. What loaded belongs to the one that is gone, so
+        // none of it is written here; the caller asks this one for its own data instead.
+        if (!IsAsBuilt(loaded.AsBuilt, component))
+        {
+            _replaced.Add(key);
+            return key;
+        }
+
+        Apply(component, loaded.Fields);
+        return key;
+    }
+
+    /// <summary>
+    /// WHAT A PREFETCH LOADED, and how to recognise the component that loaded it.
+    ///
+    /// <para>
+    /// Carrying only the DELTA — the fields the prefetch changed — was the first answer to a
+    /// constructor argument being overwritten, and it is not in this method because it turned out
+    /// to change nothing: a component whose comparable fields still match how the loader was built
+    /// has, by definition, the same values in them, so writing them back is a no-op. The identity
+    /// check below is what actually fixes it, and a mechanism that pins to no test is worse than
+    /// none. Measured: with the delta removed the whole suite still passes.
+    /// </para>
+    /// </summary>
+    /// <param name="component">The component, as its prefetch left it.</param>
+    /// <param name="asBuilt">Its <see cref="Capture"/> from before the prefetch ran.</param>
+    public static LoadedComponentState WhatLoaded(
+        UiComponent component, IReadOnlyDictionary<string, object?> asBuilt)
+    {
+        var identity = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var field in FieldsOf(component.GetType()))
+        {
+            if (!IsComparable(field)) continue;
+            if (asBuilt.TryGetValue(field.Name, out var before)) identity[field.Name] = before;
+        }
+
+        return new LoadedComponentState(component, identity, Capture(component));
+    }
+
+    /// <summary>
+    /// Whether this component still looks the way the one that loaded under its key looked when it
+    /// was built. Only the comparable fields are read; a component whose arguments are all opaque
+    /// cannot be told apart here, and is restored as before.
+    /// </summary>
+    private static bool IsAsBuilt(IReadOnlyDictionary<string, object?> asBuilt, UiComponent component)
+    {
+        foreach (var field in FieldsOf(component.GetType()))
+        {
+            if (!IsComparable(field)) continue;
+            if (!asBuilt.TryGetValue(field.Name, out var before)) continue;
+            if (!Equals(before, field.GetValue(component))) return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Where the field walk stops: the base a component inherits FROM rather than one it is. Both
+    /// are named rather than inferred from an assembly, because a component the framework ships
+    /// (a shared component, a chart) declares state of its own that has to travel like anyone's.
+    /// </summary>
+    private static bool IsFrameworkBase(Type type) =>
+        type == typeof(object) || type == typeof(UiComponent) || type == typeof(HtmlElement);
+
+    /// <summary>
+    /// Whether two values of this field can be compared here at all. A value type or a string can:
+    /// equal values mean nothing happened to it. Anything else cannot — a prefetch doing
+    /// <c>_items.AddRange(await …)</c> leaves the same reference holding different contents, and no
+    /// comparison here tells that apart from a field it never touched. Those are always written
+    /// back, which is what this scope did for every field before the delta existed.
+    /// </summary>
+    private static bool IsComparable(FieldInfo field) =>
+        field.FieldType.IsValueType || field.FieldType == typeof(string);
+
+    /// <summary>
+    /// Writes a field map back onto a component. By NAME against the declared fields of the type
+    /// and its bases, so a value loaded in one round survives into the next one's fresh instance.
+    /// A name the type does not declare is skipped rather than thrown on: the round that wrote it
+    /// may have expanded a different tree, and a missing value is recoverable where a throw is not.
+    /// </summary>
+    private static void Apply(UiComponent component, IReadOnlyDictionary<string, object?> fields)
+    {
+        foreach (var field in FieldsOf(component.GetType()))
+        {
+            if (!fields.TryGetValue(field.Name, out var value)) continue;
+            // A null is written like any other value, because CLEARING a non-null default is
+            // something a prefetch legitimately does and skipping it would silently keep the
+            // default. The type check still stands for anything that is not null.
+            //
+            // A Nullable<T> needs nothing special here, which is worth stating because it looks as
+            // though it should: GetValue really does box a non-null `long?` as a `System.Int64`,
+            // but `IsInstanceOfType` special-cases Nullable and answers True for that box.
+            // Measured — `typeof(long?).IsInstanceOfType(42L)` is True — so unwrapping the
+            // underlying type here would be a line that reads like a fix for a defect there is no
+            // evidence of.
+            if (value is not null && !field.FieldType.IsInstanceOfType(value)) continue;
+            field.SetValue(component, value);
+        }
+    }
+
+    /// <summary>
+    /// Every instance field a component DECLARES, its own bases included, stopping at the
+    /// framework's.
+    ///
+    /// <para>
+    /// The bases matter because <c>GetFields</c> alone does not return a base type's PRIVATE fields,
+    /// so a page keeping its loaded value in a private field on a base class had it silently dropped
+    /// — measured, and the second half of the defect this change fixes. The derived declaration wins
+    /// when a name is shadowed, which is the order C# itself resolves.
+    /// </para>
+    ///
+    /// <para>
+    /// The STOP matters just as much, and it was missing. Walking all the way to <c>object</c> swept
+    /// in the base's own machinery: a Core page shipped roughly a hundred and eighty
+    /// <c>HtmlElement</c> attribute slots and, worse, <c>_children</c> — the component GRAPH — into
+    /// the hydration payload, and a write-once component shipped the six layout properties
+    /// <c>VisualNode</c> declares. None of that is state the client rebuilds from a payload: it
+    /// constructs the element itself and its own <c>Build</c> sets those. Restoring them would be
+    /// the constructor-argument defect again, one layer down.
+    /// </para>
+    /// </summary>
+    public static IEnumerable<FieldInfo> FieldsOf(Type type)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        for (var current = type; current is not null && !IsFrameworkBase(current); current = current.BaseType)
+        {
+            foreach (var field in current.GetFields(
+                BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.DeclaredOnly))
+            {
+                if (seen.Add(field.Name)) yield return field;
+            }
+        }
+    }
+}
