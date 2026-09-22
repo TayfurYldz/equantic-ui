@@ -34,44 +34,39 @@ public static class ImageExtensions
     }
 
     /// <summary>
-    /// Maps the image optimization endpoint and enables global image optimization.
-    /// Call after UseStaticFiles() and before MapUI().
+    /// Maps the image optimization endpoint, and that is the whole of it — there is no global
+    /// state to switch on. Call after UseStaticFiles() and before MapUI().
     /// </summary>
     /// <param name="app">The web application.</param>
     /// <returns>The web application for chaining.</returns>
     public static WebApplication UseImageOptimization(this WebApplication app)
     {
-        var options = app.Services.GetRequiredService<ImageOptimizationOptions>();
-        ConfigureImageOptimization(app, options);
+        // Resolved and dropped ON PURPOSE: this overload is the one an author can reach without
+        // having called AddImageOptimization, and a missing registration should stop the app at
+        // startup rather than answer the first image request with a 500 from inside the handler.
+        app.Services.GetRequiredService<ImageOptimizationOptions>();
+        MapImageEndpoint(app);
         return app;
     }
 
     /// <summary>
-    /// Enables server-side image optimization via UIOptions fluent API.
-    /// Registers services and the optimization endpoint mapping.
+    /// Registers the optimizer's services and maps its endpoint, through the UIOptions fluent
+    /// surface. Nothing else turns on: the endpoint reads its options per request.
     /// </summary>
     public static UIOptions UseImageOptimization(
         this UIOptions options, 
         Action<ImageOptimizationOptions>? configure = null)
     {
         options.RegisterServices(services => services.AddImageOptimization(configure));
-        options.RegisterEndpoints(endpoints =>
-        {
-            var imgOptions = endpoints.ServiceProvider.GetRequiredService<ImageOptimizationOptions>();
-            ConfigureImageOptimization(endpoints, imgOptions);
-        });
+        // No lookup here: the same call registered the services a line above, so there is nothing
+        // to check and nothing to hand over.
+        options.RegisterEndpoints(MapImageEndpoint);
         return options;
     }
 
-    private static void ConfigureImageOptimization(IEndpointRouteBuilder endpoints, ImageOptimizationOptions options)
-    {
-        // Map the image optimization endpoint
+    /// <summary>One owner of the route, which is the only reason this is still a method.</summary>
+    private static void MapImageEndpoint(IEndpointRouteBuilder endpoints) =>
+        // The endpoint IS the feature: the handler reads ImageOptimizationOptions from the
+        // REQUEST's services on every call, so nothing needs handing to it here.
         endpoints.MapGet("/_equantic/image", ImageOptimizationMiddleware.HandleAsync);
-
-        // Set global state so the Image component knows optimization is available
-        ImageOptimizationState.IsEnabled = true;
-        ImageOptimizationState.DefaultQuality = options.DefaultQuality;
-        ImageOptimizationState.DeviceSizes = options.DeviceSizes;
-        ImageOptimizationState.ImageSizes = options.ImageSizes;
-    }
 }
