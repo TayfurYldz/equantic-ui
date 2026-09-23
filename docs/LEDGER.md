@@ -431,6 +431,17 @@ record of a release, the wiki's Upgrading page is the distillate.
   a call to its twin's static (`IconGlyph.fromIcons`); `[ConversionPassesThrough]` keeps `SizeValue`
   from a number as the number it is, and `VocabularyConversionTests` derives the whole set and fails
   on either half left implicit.
+- **2026-09-23 · A generated file its generator stopped emitting goes with it**: eqc reads generated
+  sources as files, and Roslyn deletes none, so a deleted component's factory surface stayed in
+  obj/.../generated and was transpiled on the next build
+  ([#253](https://github.com/eQuantic/equantic-ui/issues/253)). Measured, a compile that runs
+  rewrites every file it generates; the SDK now removes, after a compile that ran, each generated
+  file older than its start that the compile did not take as input, and nothing after one that was
+  skipped. The vector catalog in the same folder had never skipped at all: its target's Inputs was
+  a wildcard in a plain string, which MSBuild does not expand, so eqicon started on every build. It
+  now skips on an unchanged set of SVGs, notices a deleted one through a record of the set, and a
+  skipped catalog target still adds the catalog to @(Compile), which keeps it out of the prune. The
+  guard that eqc takes its file list from the one function was already #264's.
 
 ## Retired documents
 
